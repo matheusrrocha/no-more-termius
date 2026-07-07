@@ -12,6 +12,9 @@ pub struct Connection {
     pub user: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_file: Option<PathBuf>,
+    /// Remote directory the SFTP browser opens in (`~` = remote home).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sftp_dir: Option<String>,
     #[serde(default)]
     pub favorite: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

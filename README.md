@@ -74,7 +74,9 @@ Favorites (`★`) sort first, then most recently used.
 Tab/Shift-Tab move between fields. On the *Key file* field, **Ctrl-o** opens a
 file browser starting at `~` (hidden files visible — keys live in `~/.ssh`;
 `.` toggles). `/` filters, `h`/`l` or Enter navigate, Enter on a file picks
-it. Enter saves the form, Esc cancels.
+it. The optional *SFTP folder* field sets the remote directory the SFTP
+browser opens in (`~/...` is home-relative; falls back to home if missing).
+Enter saves the form, Esc cancels.
 
 ### SFTP (dual pane: local left, remote right)
 `/` filters the active pane. Tab switches panes.
@@ -83,7 +85,8 @@ it. Enter saves the form, Esc cancels.
 |---|---|
 | Enter / `l` on dir | enter it |
 | Enter on file | transfer it to the other pane's directory |
-| Space | preview (Quick Look; remote: images/text/pdf up to 10 MB) |
+| Space | preview in a modal — text scrollable, images rendered in-terminal (pure Rust, no external tools). Remote files: images/text up to 10 MB, temp copies removed automatically |
+| `y` | copy selected path to clipboard |
 | `R` | rename selection |
 | `D` | delete selection (confirms; dirs must be empty) |
 | `h` / Backspace | parent directory |

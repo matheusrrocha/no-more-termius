@@ -39,6 +39,7 @@ mod tests {
             port: 22,
             user: None,
             identity_file: None,
+            sftp_dir: None,
             favorite: false,
             last_used: None,
         }

@@ -1,12 +1,13 @@
 [package]
 name = "no-more-termius"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0.103"
 dirs = "6.0.0"
 fuzzy-matcher = "0.3.7"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "tiff"] }
 ratatui = "0.30.2"
 serde = { version = "1.0.228", features = ["derive"] }
 ssh2 = "0.9.6"

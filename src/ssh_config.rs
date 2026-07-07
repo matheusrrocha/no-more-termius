@@ -89,6 +89,7 @@ pub fn to_connections(hosts: Vec<SshHost>, home: &Path) -> Vec<Connection> {
             port: h.port.unwrap_or(22),
             user: h.user,
             identity_file: h.identity_file.map(|p| expand_tilde(&p, home)),
+            sftp_dir: None,
             favorite: false,
             last_used: None,
         })
