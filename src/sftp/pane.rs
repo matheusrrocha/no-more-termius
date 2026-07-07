@@ -132,6 +132,26 @@ pub fn sort_entries(entries: &mut [FsEntry]) {
     });
 }
 
+/// Valid file name for rename: non-empty, no path separators, not `.`/`..`.
+pub fn is_valid_entry_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && !name.contains('\0') && name != "." && name != ".."
+}
+
+/// Remote preview whitelist: small images, text-like files and PDFs.
+pub fn remote_preview_supported(name: &str) -> bool {
+    const EXTENSIONS: &[&str] = &[
+        // images
+        "png", "jpg", "jpeg", "gif", "bmp", "webp", "heic", "tiff", "svg", // text
+        "txt", "md", "log", "json", "yaml", "yml", "toml", "conf", "cfg", "ini", "csv", "xml",
+        "html", "css", "js", "ts", "sh", "py", "rb", "go", "rs", "sql", "env", // documents
+        "pdf",
+    ];
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
 pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
@@ -243,6 +263,26 @@ mod tests {
         assert_eq!(pane.selected, 0);
         pane.move_selection(100);
         assert_eq!(pane.selected, 2); // .., a, b
+    }
+
+    #[test]
+    fn remote_preview_whitelist() {
+        assert!(remote_preview_supported("photo.PNG"));
+        assert!(remote_preview_supported("notes.md"));
+        assert!(remote_preview_supported("doc.pdf"));
+        assert!(!remote_preview_supported("archive.tar.gz"));
+        assert!(!remote_preview_supported("binary"));
+        assert!(!remote_preview_supported("app.exe"));
+    }
+
+    #[test]
+    fn entry_name_validation() {
+        assert!(is_valid_entry_name("file.txt"));
+        assert!(is_valid_entry_name(".hidden"));
+        assert!(!is_valid_entry_name(""));
+        assert!(!is_valid_entry_name("a/b"));
+        assert!(!is_valid_entry_name("."));
+        assert!(!is_valid_entry_name(".."));
     }
 
     #[test]

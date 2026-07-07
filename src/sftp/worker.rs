@@ -33,6 +33,10 @@ pub enum SftpRequest {
     StatRemote(PathBuf),
     Upload { local: PathBuf, remote: PathBuf },
     Download { remote: PathBuf, local: PathBuf },
+    Rename { from: PathBuf, to: PathBuf },
+    Delete { path: PathBuf, is_dir: bool },
+    /// Download to a temp path for previewing (PreviewReady on success).
+    Preview { remote: PathBuf, local: PathBuf },
     Shutdown,
 }
 
@@ -60,6 +64,9 @@ pub enum SftpEvent {
     Progress { transferred: u64, total: u64 },
     TransferDone { direction: Direction, name: String, bytes: u64 },
     TransferFailed { error: String, cancelled: bool },
+    /// Outcome of a remote rename/delete: Ok(status line) or Err(error line).
+    OpFinished(Result<String, String>),
+    PreviewReady(PathBuf),
     Fatal(String),
 }
 
@@ -141,10 +148,31 @@ fn run_worker(
                 let _ = tx.send(event);
             }
             Ok(SftpRequest::Upload { local, remote }) => {
-                transfer(&sess, &sftp, Direction::Upload, &local, &remote, &tx, &cancel);
+                transfer(&sess, &sftp, Direction::Upload, &local, &remote, &tx, &cancel, false);
             }
             Ok(SftpRequest::Download { remote, local }) => {
-                transfer(&sess, &sftp, Direction::Download, &remote, &local, &tx, &cancel);
+                transfer(&sess, &sftp, Direction::Download, &remote, &local, &tx, &cancel, false);
+            }
+            Ok(SftpRequest::Preview { remote, local }) => {
+                transfer(&sess, &sftp, Direction::Download, &remote, &local, &tx, &cancel, true);
+            }
+            Ok(SftpRequest::Rename { from, to }) => {
+                // No flags: the server refuses to overwrite an existing target.
+                let result = sftp
+                    .rename(&from, &to, None)
+                    .map(|_| format!("Renamed to {}", display_name(&to)))
+                    .map_err(|e| format!("rename failed: {e}"));
+                let _ = tx.send(SftpEvent::OpFinished(result));
+            }
+            Ok(SftpRequest::Delete { path, is_dir }) => {
+                let result = if is_dir {
+                    sftp.rmdir(&path)
+                } else {
+                    sftp.unlink(&path)
+                }
+                .map(|_| format!("Deleted {}", display_name(&path)))
+                .map_err(|e| format!("delete failed: {e}"));
+                let _ = tx.send(SftpEvent::OpFinished(result));
             }
             Ok(SftpRequest::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
             Ok(_) => {} // stray prompt replies
@@ -222,7 +250,7 @@ fn check_host_key(
                             format!("[{}]:{}", params.host, params.port)
                         };
                         known_hosts
-                            .add(&host_entry, key, "added by termius-tui", key_type.into())
+                            .add(&host_entry, key, "added by no-more-termius", key_type.into())
                             .context("adding host key")?;
                         known_hosts
                             .write_file(&path, KnownHostFileKind::OpenSSH)
@@ -332,7 +360,9 @@ fn read_remote_dir(sftp: &Sftp, path: &Path) -> Result<Vec<FsEntry>, String> {
 
 /// Copy `src` → `dst` in either direction. Writes to `<dst>.part` first and
 /// renames on success, so an existing destination is never corrupted by a
-/// cancelled or failed transfer.
+/// cancelled or failed transfer. With `preview` set, success is reported as
+/// PreviewReady instead of TransferDone.
+#[allow(clippy::too_many_arguments)]
 fn transfer(
     sess: &Session,
     sftp: &Sftp,
@@ -341,6 +371,7 @@ fn transfer(
     dst: &Path,
     tx: &Sender<SftpEvent>,
     cancel: &AtomicBool,
+    preview: bool,
 ) {
     let name = dst
         .file_name()
@@ -372,10 +403,14 @@ fn transfer(
 
     match result {
         Ok(bytes) => {
-            let _ = tx.send(SftpEvent::TransferDone {
-                direction,
-                name,
-                bytes,
+            let _ = tx.send(if preview {
+                SftpEvent::PreviewReady(dst.to_path_buf())
+            } else {
+                SftpEvent::TransferDone {
+                    direction,
+                    name,
+                    bytes,
+                }
             });
         }
         Err(TransferError::Cancelled) => {
@@ -479,6 +514,12 @@ where
             Err(e)
         }
     }
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 fn part_path(dst: &Path) -> PathBuf {

@@ -26,6 +26,8 @@ pub enum Modal {
     Passphrase { key_path: PathBuf, input: String },
     ConfirmOverwrite(PendingTransfer),
     Transfer { direction: Direction, name: String, transferred: u64, total: u64 },
+    Rename { entry: FsEntry, input: String },
+    ConfirmDelete(FsEntry),
     Fatal(String),
 }
 
@@ -104,9 +106,13 @@ impl SftpScreen {
         self.status = Some((msg.into(), Instant::now()));
     }
 
-    /// `?` must not open help while typing a passphrase or a filter.
+    /// `?` must not open help while typing a passphrase, filter or new name.
     pub fn help_allowed(&self) -> bool {
-        !self.filtering && !matches!(self.modal, Some(Modal::Passphrase { .. }))
+        !self.filtering
+            && !matches!(
+                self.modal,
+                Some(Modal::Passphrase { .. }) | Some(Modal::Rename { .. })
+            )
     }
 
     pub fn drain_events(&mut self) {
@@ -202,6 +208,17 @@ impl SftpScreen {
                     self.set_status(format!("transfer failed: {error}"));
                 }
             }
+            SftpEvent::OpFinished(result) => match result {
+                Ok(msg) => {
+                    self.set_status(msg);
+                    self.refresh_remote();
+                }
+                Err(err) => self.set_status(err),
+            },
+            SftpEvent::PreviewReady(path) => {
+                self.modal = None;
+                self.quick_look(&path);
+            }
             SftpEvent::Fatal(msg) => {
                 self.modal = Some(Modal::Fatal(msg));
             }
@@ -243,6 +260,22 @@ impl SftpScreen {
                 self.refresh_local();
                 self.refresh_remote();
             }
+            KeyCode::Char('R') => {
+                if let Some(entry) = self.active_pane().selected_entry().cloned()
+                    && !entry.is_parent()
+                {
+                    let input = entry.name.clone();
+                    self.modal = Some(Modal::Rename { entry, input });
+                }
+            }
+            KeyCode::Char('D') => {
+                if let Some(entry) = self.active_pane().selected_entry().cloned()
+                    && !entry.is_parent()
+                {
+                    self.modal = Some(Modal::ConfirmDelete(entry));
+                }
+            }
+            KeyCode::Char(' ') => self.preview_selected(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => self.go_parent(),
             KeyCode::Char('l') | KeyCode::Right => {
                 // vim-style: `l` only enters directories, never transfers.
@@ -344,8 +377,154 @@ impl SftpScreen {
                 // Modal stays open until the worker reports done/failed.
                 self.modal = Some(Modal::Transfer { direction, name, transferred, total });
             }
+            Some(Modal::Rename { entry, mut input }) => match key.code {
+                KeyCode::Enter => self.do_rename(&entry, input.trim()),
+                KeyCode::Esc => {}
+                KeyCode::Backspace => {
+                    input.pop();
+                    self.modal = Some(Modal::Rename { entry, input });
+                }
+                KeyCode::Char(c) => {
+                    input.push(c);
+                    self.modal = Some(Modal::Rename { entry, input });
+                }
+                _ => self.modal = Some(Modal::Rename { entry, input }),
+            },
+            Some(Modal::ConfirmDelete(entry)) => match key.code {
+                KeyCode::Char('y') => self.do_delete(&entry),
+                // Default is NO: Enter, n and Esc all decline.
+                KeyCode::Char('n') | KeyCode::Esc | KeyCode::Enter => {
+                    self.set_status("delete cancelled");
+                }
+                _ => self.modal = Some(Modal::ConfirmDelete(entry)),
+            },
             Some(Modal::Fatal(_)) => self.exit = true,
             None => {}
+        }
+    }
+
+    fn do_rename(&mut self, entry: &FsEntry, new_name: &str) {
+        if new_name == entry.name {
+            return;
+        }
+        if !pane::is_valid_entry_name(new_name) {
+            self.set_status(format!("invalid name: {new_name:?}"));
+            return;
+        }
+        let target = entry.path.with_file_name(new_name);
+        match self.active {
+            Side::Local => {
+                // fs::rename overwrites silently on Unix — refuse instead.
+                if std::fs::symlink_metadata(&target).is_ok() {
+                    self.set_status(format!("{new_name} already exists"));
+                    return;
+                }
+                match std::fs::rename(&entry.path, &target) {
+                    Ok(()) => {
+                        self.set_status(format!("Renamed to {new_name}"));
+                        self.refresh_local();
+                    }
+                    Err(e) => self.set_status(format!("rename failed: {e}")),
+                }
+            }
+            Side::Remote => {
+                self.worker.send(SftpRequest::Rename {
+                    from: entry.path.clone(),
+                    to: target,
+                });
+            }
+        }
+    }
+
+    /// Space: Quick Look preview. Local files open directly; remote files are
+    /// downloaded to a temp path first (small images/text/pdf only).
+    fn preview_selected(&mut self) {
+        const MAX_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
+        let Some(entry) = self.active_pane().selected_entry().cloned() else {
+            return;
+        };
+        if entry.is_dir {
+            self.set_status("cannot preview a directory");
+            return;
+        }
+        match self.active {
+            Side::Local => {
+                let path = entry.path.clone();
+                self.quick_look(&path);
+            }
+            Side::Remote => {
+                if !pane::remote_preview_supported(&entry.name) {
+                    self.set_status("remote preview supports images, text files and pdf");
+                    return;
+                }
+                if entry.size > MAX_PREVIEW_BYTES {
+                    self.set_status(format!(
+                        "too large to preview ({}, max {})",
+                        pane::human_size(entry.size),
+                        pane::human_size(MAX_PREVIEW_BYTES)
+                    ));
+                    return;
+                }
+                let tmp_dir = std::env::temp_dir().join("no-more-termius-preview");
+                if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
+                    self.set_status(format!("preview failed: {e}"));
+                    return;
+                }
+                let local = tmp_dir.join(&entry.name);
+                self.worker.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+                self.modal = Some(Modal::Transfer {
+                    direction: Direction::Download,
+                    name: format!("{} (preview)", entry.name),
+                    transferred: 0,
+                    total: entry.size,
+                });
+                self.worker.send(SftpRequest::Preview {
+                    remote: entry.path.clone(),
+                    local,
+                });
+            }
+        }
+    }
+
+    fn quick_look(&mut self, path: &std::path::Path) {
+        let spawned = std::process::Command::new("qlmanage")
+            .arg("-p")
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        match spawned {
+            Ok(_) => self.set_status(format!(
+                "previewing {}",
+                path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+            )),
+            Err(e) => self.set_status(format!("preview failed: {e}")),
+        }
+    }
+
+    fn do_delete(&mut self, entry: &FsEntry) {
+        match self.active {
+            Side::Local => {
+                let result = if entry.is_dir && !entry.is_symlink {
+                    // Only empty directories: no accidental recursive wipes.
+                    std::fs::remove_dir(&entry.path)
+                } else {
+                    std::fs::remove_file(&entry.path)
+                };
+                match result {
+                    Ok(()) => {
+                        self.set_status(format!("Deleted {}", entry.name));
+                        self.refresh_local();
+                    }
+                    Err(e) => self.set_status(format!("delete failed: {e}")),
+                }
+            }
+            Side::Remote => {
+                self.worker.send(SftpRequest::Delete {
+                    path: entry.path.clone(),
+                    is_dir: entry.is_dir && !entry.is_symlink,
+                });
+            }
         }
     }
 

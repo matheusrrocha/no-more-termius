@@ -3,10 +3,11 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Gauge, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::screens::help::centered_rect;
+use crate::theme;
 use super::pane::{human_size, PaneState, Side};
 use super::worker::Direction;
 use super::{Modal, Phase, SftpScreen};
@@ -39,18 +40,25 @@ pub fn render(frame: &mut Frame, screen: &mut SftpScreen) {
         remote_ready,
     );
 
-    let footer = screen.status_line().map(String::from).unwrap_or_else(|| {
-        if screen.filtering {
-            "type to filter · Enter open/transfer · Esc done".into()
-        } else {
-            "Tab pane · Enter open/transfer · h/l dirs · / filter · . hidden · r refresh · q back · ? help"
-                .into()
-        }
-    });
-    frame.render_widget(
-        Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
-        footer_area,
-    );
+    let footer = match screen.status_line() {
+        Some(status) => theme::status_line(status),
+        None if screen.filtering => theme::hints(&[
+            ("type", "filter"),
+            ("Enter", "open/transfer"),
+            ("Esc", "done"),
+        ]),
+        None => theme::hints(&[
+            ("Tab", "pane"),
+            ("Enter", "open/transfer"),
+            ("/", "filter"),
+            ("Space", "preview"),
+            ("R", "rename"),
+            ("D", "delete"),
+            ("q", "back"),
+            ("?", "help"),
+        ]),
+    };
+    frame.render_widget(Paragraph::new(footer), footer_area);
 
     render_modal(frame, screen);
 }
@@ -65,27 +73,19 @@ fn render_pane(
     label: &str,
     ready: bool,
 ) {
-    let border_style = if active {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    let mut title = format!(" {label}: {} ", pane.cwd.display());
+    let mut title = format!("{label}: {}", pane.cwd.display());
     if pane.loading {
-        title.push_str("⟳ ");
+        title.push_str(" ⟳");
     }
     if filtering || !pane.filter.is_empty() {
-        title.push_str(&format!("[/{}] ", pane.filter));
+        title.push_str(&format!(" [/{}]", pane.filter));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(title);
+    let block = theme::panel(title, active);
 
     if !ready {
         frame.render_widget(
             Paragraph::new("connecting…")
-                .style(Style::default().fg(Color::DarkGray))
+                .style(Style::default().fg(theme::DIM))
                 .centered()
                 .block(block),
             area,
@@ -110,11 +110,11 @@ fn render_pane(
             } else {
                 human_size(e.size)
             };
-            let padded = format!("{name:<name_width$.name_width$} {size:>9}");
+            let padded = format!(" {name:<name_width$.name_width$} {size:>9}");
             let style = if e.is_dir {
-                Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)
+                Style::default().fg(theme::DIR).add_modifier(Modifier::BOLD)
             } else if e.is_symlink {
-                Style::default().fg(Color::Magenta)
+                Style::default().fg(theme::LINK)
             } else {
                 Style::default()
             };
@@ -129,12 +129,8 @@ fn render_pane(
     });
     let list = List::new(items)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▶");
+        .highlight_style(theme::selection())
+        .highlight_symbol(theme::SELECTION_SYMBOL);
     frame.render_stateful_widget(list, area, &mut pane.list_state);
 }
 
@@ -208,10 +204,7 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
             };
             let area = centered_rect(60, 6, frame.area());
             frame.render_widget(Clear, area);
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan))
-                .title(format!(" {verb} {name} "));
+            let block = theme::modal(format!("{verb} {name}"), theme::ACCENT);
             let inner = block.inner(area);
             frame.render_widget(block, area);
             let [gauge_area, label_area] =
@@ -229,7 +222,7 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
             };
             frame.render_widget(
                 Gauge::default()
-                    .gauge_style(Style::default().fg(Color::Cyan))
+                    .gauge_style(Style::default().fg(theme::ACCENT))
                     .ratio(ratio),
                 gauge_area,
             );
@@ -243,6 +236,51 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
                 .centered(),
                 label_area,
             );
+        }
+        Modal::Rename { entry, input } => {
+            let lines = vec![
+                Line::raw(format!("Rename {}:", entry.name)),
+                Line::from(vec![
+                    Span::styled(input.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled("▏", Style::default().fg(Color::Cyan)),
+                ]),
+                Line::default(),
+                Line::styled(
+                    "Enter rename · Esc cancel",
+                    Style::default().fg(Color::DarkGray),
+                )
+                .centered(),
+            ];
+            render_box(frame, " Rename ", lines, Color::Cyan);
+        }
+        Modal::ConfirmDelete(entry) => {
+            let what = if entry.is_dir {
+                "directory (must be empty)"
+            } else if entry.is_symlink {
+                "symlink"
+            } else {
+                "file"
+            };
+            let lines = vec![
+                Line::from(vec![
+                    Span::raw("Delete "),
+                    Span::styled(
+                        entry.name.clone(),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(format!(" ({what})?")),
+                ]),
+                Line::raw("This cannot be undone."),
+                Line::default(),
+                Line::from(vec![
+                    Span::styled("y", Style::default().fg(Color::Red).bold()),
+                    Span::raw(" delete   "),
+                    Span::styled("n", Style::default().fg(Color::Green).bold()),
+                    Span::raw(" cancel (default)"),
+                ])
+                .centered(),
+            ];
+            render_box(frame, " Delete? ", lines, Color::Red);
         }
         Modal::Fatal(msg) => {
             let lines = vec![
@@ -271,12 +309,9 @@ fn render_box(frame: &mut Frame, title: &str, lines: Vec<Line>, color: Color) {
     let area = centered_rect(width.min(frame.area().width), height, frame.area());
     frame.render_widget(Clear, area);
     frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(color))
-                .title(title.to_string()),
-        ),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(theme::modal(title.trim(), color)),
         area,
     );
 }
