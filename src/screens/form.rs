@@ -10,15 +10,19 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::Action;
-use crate::theme;
 use crate::model::Connection;
+use crate::theme;
 
-const FIELD_LABELS: [&str; 5] = ["Name", "Host", "Port", "User", "Key file"];
-const FAVORITE_FIELD: usize = 5;
+const FIELD_LABELS: [&str; 6] = ["Name", "Host", "Port", "User", "Key file", "SFTP folder"];
+const PORT_FIELD: usize = 2;
+const KEY_FIELD: usize = 4;
+const SFTP_DIR_FIELD: usize = 5;
+const FAVORITE_FIELD: usize = 6;
+const FOCUS_COUNT: usize = 7;
 
 pub struct FormScreen {
     pub editing: Option<usize>,
-    fields: [String; 5],
+    fields: [String; 6],
     favorite: bool,
     focus: usize,
     error: Option<String>,
@@ -50,6 +54,7 @@ impl FormScreen {
                     .as_ref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default(),
+                conn.sftp_dir.clone().unwrap_or_default(),
             ],
             favorite: conn.favorite,
             focus: 0,
@@ -68,34 +73,36 @@ impl FormScreen {
     }
 
     pub fn set_key_path(&mut self, path: PathBuf) {
-        self.fields[4] = path.display().to_string();
+        self.fields[KEY_FIELD] = path.display().to_string();
     }
 
     pub fn handle_key(&mut self, key: KeyEvent, connections: &[Connection]) -> Action {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => return Action::CancelForm,
-            KeyCode::Tab | KeyCode::Down => self.focus = (self.focus + 1) % 6,
-            KeyCode::BackTab | KeyCode::Up => self.focus = (self.focus + 5) % 6,
+            KeyCode::Tab | KeyCode::Down => self.focus = (self.focus + 1) % FOCUS_COUNT,
+            KeyCode::BackTab | KeyCode::Up => {
+                self.focus = (self.focus + FOCUS_COUNT - 1) % FOCUS_COUNT;
+            }
             KeyCode::Enter => match self.validate(connections) {
                 Ok(conn) => return Action::SubmitForm(self.editing, conn),
                 Err(msg) => self.error = Some(msg),
             },
             KeyCode::Char('o') if ctrl => {
-                if self.focus == 4 {
+                if self.focus == KEY_FIELD {
                     return Action::OpenPicker(self.picker_start());
                 }
             }
             KeyCode::Char(' ') if self.focus == FAVORITE_FIELD => {
                 self.favorite = !self.favorite;
             }
-            KeyCode::Char(c) if !ctrl && self.focus < 5 => {
-                if self.focus == 2 && !c.is_ascii_digit() {
+            KeyCode::Char(c) if !ctrl && self.focus < FAVORITE_FIELD => {
+                if self.focus == PORT_FIELD && !c.is_ascii_digit() {
                     return Action::None; // port accepts digits only
                 }
                 self.fields[self.focus].push(c);
             }
-            KeyCode::Backspace if self.focus < 5 => {
+            KeyCode::Backspace if self.focus < FAVORITE_FIELD => {
                 self.fields[self.focus].pop();
             }
             _ => {}
@@ -104,7 +111,7 @@ impl FormScreen {
     }
 
     fn picker_start(&self) -> PathBuf {
-        let current = PathBuf::from(self.fields[4].trim());
+        let current = PathBuf::from(self.fields[KEY_FIELD].trim());
         current
             .parent()
             .filter(|p| p.is_dir())
@@ -129,10 +136,10 @@ impl FormScreen {
         if duplicate {
             return Err(format!("A connection named \"{name}\" already exists"));
         }
-        let port = if self.fields[2].trim().is_empty() {
+        let port = if self.fields[PORT_FIELD].trim().is_empty() {
             22
         } else {
-            self.fields[2]
+            self.fields[PORT_FIELD]
                 .trim()
                 .parse::<u16>()
                 .ok()
@@ -142,7 +149,7 @@ impl FormScreen {
         let user = Some(self.fields[3].trim())
             .filter(|s| !s.is_empty())
             .map(String::from);
-        let key = self.fields[4].trim();
+        let key = self.fields[KEY_FIELD].trim();
         let identity_file = if key.is_empty() {
             None
         } else {
@@ -152,12 +159,16 @@ impl FormScreen {
             }
             Some(path)
         };
+        let sftp_dir = Some(self.fields[SFTP_DIR_FIELD].trim())
+            .filter(|s| !s.is_empty())
+            .map(String::from);
         Ok(Connection {
             name: name.into(),
             host: host.into(),
             port,
             user,
             identity_file,
+            sftp_dir,
             favorite: self.favorite,
             last_used: self.last_used,
         })
@@ -180,6 +191,7 @@ impl FormScreen {
             Constraint::Length(3), // port
             Constraint::Length(3), // user
             Constraint::Length(3), // key
+            Constraint::Length(3), // sftp folder
             Constraint::Length(1), // favorite
             Constraint::Length(1), // spacer
             Constraint::Length(1), // error/hints
@@ -190,10 +202,15 @@ impl FormScreen {
         for (i, label) in FIELD_LABELS.iter().enumerate() {
             let focused = self.focus == i;
             let mut text = self.fields[i].clone();
-            if i == 4 && text.is_empty() {
-                text = "(optional — Ctrl-o to browse)".into();
+            if text.is_empty() {
+                text = match i {
+                    KEY_FIELD => "(optional — Ctrl-o to browse)".into(),
+                    SFTP_DIR_FIELD => "(optional — remote dir to open, e.g. /var/www)".into(),
+                    _ => text,
+                };
             }
-            let value_style = if i == 4 && self.fields[4].is_empty() {
+            let value_style = if self.fields[i].is_empty() && (i == KEY_FIELD || i == SFTP_DIR_FIELD)
+            {
                 Style::default().fg(theme::DIM)
             } else {
                 Style::default()
@@ -212,7 +229,9 @@ impl FormScreen {
         }
 
         let fav_style = if self.focus == FAVORITE_FIELD {
-            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
@@ -231,7 +250,7 @@ impl FormScreen {
                 ("?", "help"),
             ]),
         };
-        frame.render_widget(Paragraph::new(footer), rows[7]);
+        frame.render_widget(Paragraph::new(footer), rows[8]);
     }
 }
 
@@ -259,6 +278,7 @@ mod tests {
             port: 22,
             user: None,
             identity_file: None,
+            sftp_dir: None,
             favorite: false,
             last_used: None,
         }
@@ -284,6 +304,7 @@ mod tests {
             port: 2222,
             user: Some("root".into()),
             identity_file: None,
+            sftp_dir: Some("/var/www".into()),
             favorite: true,
             last_used: Some(123),
         };
@@ -293,6 +314,7 @@ mod tests {
         assert_eq!(form.fields[1], "10.0.0.1");
         assert_eq!(form.fields[2], "2222");
         assert_eq!(form.fields[3], "root");
+        assert_eq!(form.fields[SFTP_DIR_FIELD], "/var/www");
         assert!(form.favorite);
         assert_eq!(form.last_used, None);
     }

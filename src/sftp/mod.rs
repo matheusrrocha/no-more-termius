@@ -5,7 +5,7 @@ pub mod pane;
 pub mod ui;
 pub mod worker;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -63,6 +63,12 @@ pub struct SftpScreen {
     pub exit: bool,
     status: Option<(String, Instant)>,
     pending_stat: Option<PendingStat>,
+    /// Connection's configured start dir for the remote pane.
+    initial_remote: Option<String>,
+    remote_home: Option<PathBuf>,
+    /// True while the first listing (of the configured dir) is in flight,
+    /// so a failure can fall back to the remote home.
+    awaiting_initial: bool,
     worker: WorkerHandle,
 }
 
@@ -108,6 +114,9 @@ impl SftpScreen {
             exit: false,
             status: None,
             pending_stat: None,
+            initial_remote: conn.sftp_dir.clone(),
+            remote_home: None,
+            awaiting_initial: false,
             worker,
         }
     }
@@ -152,14 +161,34 @@ impl SftpScreen {
             SftpEvent::Connected { remote_home } => {
                 self.phase = Phase::Ready;
                 self.remote.loading = true;
-                self.worker.send(SftpRequest::ReadDir(remote_home));
+                let start = match self.initial_remote.as_deref() {
+                    Some(dir) => {
+                        self.awaiting_initial = true;
+                        expand_remote(dir, &remote_home)
+                    }
+                    None => remote_home.clone(),
+                };
+                self.remote_home = Some(remote_home);
+                self.worker.send(SftpRequest::ReadDir(start));
             }
             SftpEvent::DirListing { path, result } => {
                 self.remote.loading = false;
                 match result {
                     Ok(entries) => {
+                        self.awaiting_initial = false;
                         self.remote
                             .set_listing(path, entries, self.show_hidden);
+                    }
+                    Err(e) if self.awaiting_initial => {
+                        // Configured start dir is unavailable: open home instead.
+                        self.awaiting_initial = false;
+                        self.set_status(format!(
+                            "default folder unavailable ({e}) — opening home"
+                        ));
+                        if let Some(home) = self.remote_home.clone() {
+                            self.remote.loading = true;
+                            self.worker.send(SftpRequest::ReadDir(home));
+                        }
                     }
                     Err(e) => self.set_status(format!("remote: {e}")),
                 }
@@ -797,6 +826,18 @@ fn image_to_halfblocks(
     lines
 }
 
+/// Expand a connection's configured SFTP dir against the remote home:
+/// `~` and `~/x` are home-relative, anything else is used verbatim.
+fn expand_remote(dir: &str, home: &Path) -> PathBuf {
+    if dir == "~" {
+        home.to_path_buf()
+    } else if let Some(rest) = dir.strip_prefix("~/") {
+        home.join(rest)
+    } else {
+        PathBuf::from(dir)
+    }
+}
+
 fn copy_to_clipboard(text: &str) -> Result<(), String> {
     use std::io::Write;
     let mut child = std::process::Command::new("pbcopy")
@@ -808,4 +849,18 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
     }
     child.wait().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_remote_paths() {
+        let home = Path::new("/home/deploy");
+        assert_eq!(expand_remote("~", home), PathBuf::from("/home/deploy"));
+        assert_eq!(expand_remote("~/www", home), PathBuf::from("/home/deploy/www"));
+        assert_eq!(expand_remote("/var/log", home), PathBuf::from("/var/log"));
+        assert_eq!(expand_remote("relative", home), PathBuf::from("relative"));
+    }
 }

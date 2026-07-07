@@ -74,7 +74,9 @@ Favorites (`★`) sort first, then most recently used.
 Tab/Shift-Tab move between fields. On the *Key file* field, **Ctrl-o** opens a
 file browser starting at `~` (hidden files visible — keys live in `~/.ssh`;
 `.` toggles). `/` filters, `h`/`l` or Enter navigate, Enter on a file picks
-it. Enter saves the form, Esc cancels.
+it. The optional *SFTP folder* field sets the remote directory the SFTP
+browser opens in (`~/...` is home-relative; falls back to home if missing).
+Enter saves the form, Esc cancels.
 
 ### SFTP (dual pane: local left, remote right)
 `/` filters the active pane. Tab switches panes.
