@@ -5,6 +5,7 @@ mod sftp;
 mod ssh;
 mod ssh_config;
 mod store;
+mod theme;
 
 use app::App;
 
