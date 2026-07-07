@@ -1,30 +1,54 @@
-# termius-tui
+# no-more-termius
 
 Keyboard-driven TUI to manage and open SSH connections, with a dual-pane
 SFTP browser. Built with Rust + ratatui.
 
+## Why
+
+Termius kept removing my saved hosts after updates. After the third time
+re-adding every server by hand, I got tired of it and built this: my
+connections now live in a plain TOML file that I own, version, and back up —
+no account, no sync, no surprises.
+
 ## Install
 
 ```sh
-cargo install --path .        # → ~/.cargo/bin/termius-tui
+cargo install --path .
 ```
 
-tmux shortcut (already configured in `~/.config/tmux/tmux.conf`):
+This puts the `no-more-termius` binary in `~/.cargo/bin`. If that directory
+is not already on your PATH, add it to your shell profile:
+
+```sh
+# ~/.zshrc or ~/.bashrc
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+Then run it directly from any terminal:
+
+```sh
+no-more-termius
+```
+
+### tmux shortcut (optional)
+
+If you use tmux, a binding like this opens the picker in a new window —
+pick a connection, ssh runs in that window, and when the session ends you
+are back in the picker:
 
 ```tmux
-bind h new-window -n ssh ~/.cargo/bin/termius-tui
+# ~/.tmux.conf or ~/.config/tmux/tmux.conf
+bind h new-window -n ssh ~/.cargo/bin/no-more-termius
 ```
 
-`prefix + h` opens a new window with the connection picker. Picking a
-connection runs `ssh` in that window; when the session ends you are back in
-the picker.
+Reload with `tmux source-file <path-to-your-conf>` and use `prefix + h`.
 
 ## Data
 
-Connections live in `~/.config/termius-tui/connections.toml`. On first run
-the app offers to import the hosts from `~/.ssh/config` (wildcard entries are
-skipped). Connecting uses **system ssh**, so your `~/.ssh/config` directives
-(agent, ProxyJump, IdentityAgent…) still apply on top.
+Connections live in `~/.config/no-more-termius/connections.toml`. On first
+run the app offers to import the hosts from `~/.ssh/config` (wildcard entries
+are skipped). Connecting uses **system ssh**, so your `~/.ssh/config`
+directives (agent, ProxyJump, IdentityAgent…) still apply on top.
 
 ## Keys
 
@@ -59,6 +83,9 @@ it. Enter saves the form, Esc cancels.
 |---|---|
 | Enter / `l` on dir | enter it |
 | Enter on file | transfer it to the other pane's directory |
+| Space | preview (Quick Look; remote: images/text/pdf up to 10 MB) |
+| `R` | rename selection |
+| `D` | delete selection (confirms; dirs must be empty) |
 | `h` / Backspace | parent directory |
 | `j`/`k`, ↑/↓, PgUp/PgDn, `g`/`G` | move selection |
 | `.` | show/hide hidden files |
@@ -78,3 +105,6 @@ ssh-agent → default `~/.ssh/id_*` keys.
 cargo test      # parser, store, ssh args, pane logic
 cargo clippy
 ```
+
+Branching: `main` holds tagged releases (`vX.Y.Z`); day-to-day work happens
+on `develop` and is merged into `main` for each release.
