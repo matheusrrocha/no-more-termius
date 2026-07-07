@@ -16,11 +16,21 @@ struct StoreFileRef<'a> {
     connection: &'a [Connection],
 }
 
+/// One-time migration from the project's old name.
+fn migrate_legacy_dir(home: &std::path::Path) {
+    let old = home.join(".config/termius-tui");
+    let new = home.join(".config/no-more-termius");
+    if old.is_dir() && !new.exists() {
+        let _ = std::fs::rename(&old, &new);
+    }
+}
+
 impl Store {
     pub fn default_path() -> Result<PathBuf> {
         // dirs::config_dir() is ~/Library/Application Support on macOS; we want ~/.config.
         let home = dirs::home_dir().context("could not determine home directory")?;
-        Ok(home.join(".config/termius-tui/connections.toml"))
+        migrate_legacy_dir(&home);
+        Ok(home.join(".config/no-more-termius/connections.toml"))
     }
 
     /// `Ok(None)` means the store file does not exist yet (first run).
