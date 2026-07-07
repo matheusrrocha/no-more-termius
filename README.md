@@ -84,6 +84,7 @@ it. Enter saves the form, Esc cancels.
 | Enter / `l` on dir | enter it |
 | Enter on file | transfer it to the other pane's directory |
 | Space | preview (Quick Look; remote: images/text/pdf up to 10 MB) |
+| `y` | copy selected path to clipboard |
 | `R` | rename selection |
 | `D` | delete selection (confirms; dirs must be empty) |
 | `h` / Backspace | parent directory |

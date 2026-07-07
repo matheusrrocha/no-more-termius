@@ -104,6 +104,7 @@ pub fn for_sftp() -> HelpOverlay {
                     ("h / Backspace", "parent directory"),
                     ("/", "filter files in active pane"),
                     ("Space", "preview file (Quick Look)"),
+                    ("y", "copy path to clipboard"),
                     ("R", "rename selection"),
                     ("D", "delete selection (asks y/n)"),
                     ("j/k ↑/↓ PgUp/PgDn g/G", "move selection"),

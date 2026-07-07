@@ -276,6 +276,7 @@ impl SftpScreen {
                 }
             }
             KeyCode::Char(' ') => self.preview_selected(),
+            KeyCode::Char('y') => self.copy_selected_path(),
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => self.go_parent(),
             KeyCode::Char('l') | KeyCode::Right => {
                 // vim-style: `l` only enters directories, never transfers.
@@ -486,6 +487,18 @@ impl SftpScreen {
         }
     }
 
+    /// `y`: yank the selected entry's path (`..`/empty → the directory itself).
+    fn copy_selected_path(&mut self) {
+        let path = match self.active_pane().selected_entry() {
+            Some(entry) if !entry.is_parent() => entry.path.clone(),
+            _ => self.active_pane().cwd.clone(),
+        };
+        match copy_to_clipboard(&path.to_string_lossy()) {
+            Ok(()) => self.set_status(format!("copied {}", path.display())),
+            Err(e) => self.set_status(format!("copy failed: {e}")),
+        }
+    }
+
     fn quick_look(&mut self, path: &std::path::Path) {
         let spawned = std::process::Command::new("qlmanage")
             .arg("-p")
@@ -670,4 +683,17 @@ impl SftpScreen {
             Side::Remote => &mut self.remote,
         }
     }
+}
+
+fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut child = std::process::Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    child.wait().map_err(|e| e.to_string())?;
+    Ok(())
 }
