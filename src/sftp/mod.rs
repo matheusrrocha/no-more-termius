@@ -15,6 +15,7 @@ use pane::{read_local_dir, FsEntry, PaneState, Side};
 use worker::{ConnectParams, Direction, SftpEvent, SftpRequest, WorkerHandle};
 
 const STATUS_TTL: Duration = Duration::from_secs(4);
+const TRUNCATION_MARKER: &str = "… (truncated)";
 
 pub enum Phase {
     Connecting,
@@ -453,6 +454,18 @@ impl SftpScreen {
                 let max = lines.len().saturating_sub(1);
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => return,
+                    KeyCode::Char('y') => {
+                        // Copy the previewed content (minus the truncation marker).
+                        let text: Vec<&str> = lines
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|l| *l != TRUNCATION_MARKER)
+                            .collect();
+                        match copy_to_clipboard(&text.join("\n")) {
+                            Ok(()) => self.set_status(format!("copied contents of {name}")),
+                            Err(e) => self.set_status(format!("copy failed: {e}")),
+                        }
+                    }
                     KeyCode::Down | KeyCode::Char('j') => scroll = (scroll + 1).min(max),
                     KeyCode::Up | KeyCode::Char('k') => scroll = scroll.saturating_sub(1),
                     KeyCode::PageDown => scroll = (scroll + 20).min(max),
@@ -612,7 +625,7 @@ impl SftpScreen {
         let text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_TEXT_BYTES)]);
         let mut lines: Vec<String> = text.lines().take(MAX_LINES).map(String::from).collect();
         if truncated_bytes || text.lines().count() > MAX_LINES {
-            lines.push("… (truncated)".into());
+            lines.push(TRUNCATION_MARKER.into());
         }
         self.modal = Some(Modal::Preview {
             name: name.to_string(),

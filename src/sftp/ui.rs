@@ -310,7 +310,7 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
                 .map(|l| Line::raw(l.clone()))
                 .collect();
             let title = format!(
-                "{name} — {}/{total} · j/k scroll · q close",
+                "{name} — {}/{total} · j/k scroll · y copy · q close",
                 (*scroll + 1).min(total)
             );
             frame.render_widget(
