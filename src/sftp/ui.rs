@@ -282,11 +282,17 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
             ];
             render_box(frame, " Delete? ", lines, Color::Red);
         }
-        Modal::ImagePreview { name, lines } => {
-            let img_w = lines.iter().map(|l| l.width()).max().unwrap_or(1) as u16;
-            let img_h = lines.len() as u16;
-            let area = centered_rect(img_w + 2, img_h + 2, frame.area());
+        Modal::ImagePreview { name, lines, graphics } => {
+            let area = match graphics {
+                Some(img) => image_modal_area(img, frame.area()),
+                None => {
+                    let img_w = lines.iter().map(|l| l.width()).max().unwrap_or(1) as u16;
+                    centered_rect(img_w + 2, lines.len() as u16 + 2, frame.area())
+                }
+            };
             frame.render_widget(Clear, area);
+            // With a graphics protocol the interior stays blank: the app
+            // emits the actual pixels over it after the frame is drawn.
             frame.render_widget(
                 Paragraph::new(lines.clone())
                     .block(theme::modal(format!("{name} — q close"), theme::ACCENT)),
@@ -295,12 +301,12 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
         }
         Modal::Preview { name, lines, scroll } => {
             let frame_area = frame.area();
-            let area = Rect {
-                x: frame_area.x + 2,
-                y: frame_area.y + 1,
-                width: frame_area.width.saturating_sub(4),
-                height: frame_area.height.saturating_sub(2),
-            };
+            // 80% of the screen, centered.
+            let area = centered_rect(
+                (frame_area.width as u32 * 4 / 5) as u16,
+                (frame_area.height as u32 * 4 / 5) as u16,
+                frame_area,
+            );
             frame.render_widget(Clear, area);
             let total = lines.len();
             let visible: Vec<Line> = lines
@@ -310,7 +316,7 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
                 .map(|l| Line::raw(l.clone()))
                 .collect();
             let title = format!(
-                "{name} — {}/{total} · j/k scroll · q close",
+                "{name} — {}/{total} · j/k scroll · y copy · q close",
                 (*scroll + 1).min(total)
             );
             frame.render_widget(
@@ -331,6 +337,11 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
             render_box(frame, " SFTP error ", lines, Color::Red);
         }
     }
+}
+
+/// Modal rect for a protocol-drawn image (interior = the image cell box).
+pub fn image_modal_area(img: &super::graphics::EncodedImage, frame_area: Rect) -> Rect {
+    centered_rect(img.cols + 2, img.rows + 2, frame_area)
 }
 
 fn render_box(frame: &mut Frame, title: &str, lines: Vec<Line>, color: Color) {

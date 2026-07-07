@@ -50,6 +50,10 @@ pub struct App {
     sftp: Option<SftpScreen>,
     help: Option<HelpOverlay>,
     should_quit: bool,
+    /// True while a protocol-drawn image is on screen (needs cleanup).
+    gfx_on_screen: bool,
+    /// Force re-emission of the image (resize, overlay toggles, first draw).
+    gfx_dirty: bool,
 }
 
 impl App {
@@ -82,6 +86,8 @@ impl App {
             sftp: None,
             help: None,
             should_quit: false,
+            gfx_on_screen: false,
+            gfx_dirty: false,
         })
     }
 
@@ -95,12 +101,14 @@ impl App {
             }
 
             terminal.draw(|frame| self.render(frame))?;
+            self.sync_graphics(terminal)?;
 
             // Short tick while SFTP is active so worker events drain promptly.
             let timeout = if self.screen == Screen::Sftp { 50 } else { 250 };
             if event::poll(Duration::from_millis(timeout))? {
                 match event::read()? {
                     Event::Key(key) if key.is_press() => self.on_key(key, terminal)?,
+                    Event::Resize(..) => self.gfx_dirty = true,
                     _ => {}
                 }
             }
@@ -304,6 +312,50 @@ impl App {
     fn close_sftp(&mut self) {
         self.sftp = None; // Drop joins the worker thread.
         self.screen = Screen::List;
+    }
+
+    /// Keep the protocol-drawn image in sync with the UI: emit it right
+    /// after the frame when the image modal is topmost, remove it as soon
+    /// as anything covers or closes it.
+    fn sync_graphics(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        use crate::sftp::{graphics, ui::image_modal_area, Modal};
+
+        let frame_area = terminal.get_frame().area();
+        let image = if self.help.is_none() {
+            self.sftp.as_ref().and_then(|s| match &s.modal {
+                Some(Modal::ImagePreview {
+                    graphics: Some(img),
+                    ..
+                }) => Some(img),
+                _ => None,
+            })
+        } else {
+            None
+        };
+
+        let mut out = std::io::stdout();
+        match image {
+            Some(img) => {
+                if !self.gfx_on_screen || self.gfx_dirty {
+                    if let Some(protocol) = graphics::detect() {
+                        let area = image_modal_area(img, frame_area);
+                        graphics::emit(protocol, img, area.x + 1, area.y + 1, &mut out)?;
+                    }
+                    self.gfx_on_screen = true;
+                    self.gfx_dirty = false;
+                }
+            }
+            None => {
+                if self.gfx_on_screen {
+                    if let Some(protocol) = graphics::detect() {
+                        graphics::clear(protocol, &mut out)?;
+                    }
+                    self.gfx_on_screen = false;
+                    self.gfx_dirty = false;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

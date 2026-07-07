@@ -43,6 +43,12 @@ bind h new-window -n ssh ~/.cargo/bin/no-more-termius
 
 Reload with `tmux source-file <path-to-your-conf>` and use `prefix + h`.
 
+For pixel-perfect image previews inside tmux, also enable passthrough:
+
+```tmux
+set -g allow-passthrough on
+```
+
 ## Data
 
 Connections live in `~/.config/no-more-termius/connections.toml`. On first
@@ -85,7 +91,7 @@ Enter saves the form, Esc cancels.
 |---|---|
 | Enter / `l` on dir | enter it |
 | Enter on file | transfer it to the other pane's directory |
-| Space | preview in a modal — text scrollable, images rendered in-terminal (pure Rust, no external tools). Remote files: images/text up to 10 MB, temp copies removed automatically |
+| Space | preview in a modal — text scrollable (`y` copies it); images pixel-perfect via the Kitty (kitty, Ghostty, WezTerm) or iTerm2 graphics protocol, with a pure-Rust quadrant-block fallback elsewhere. Remote files: images/text up to 10 MB, temp copies removed automatically |
 | `y` | copy selected path to clipboard |
 | `R` | rename selection |
 | `D` | delete selection (confirms; dirs must be empty) |
