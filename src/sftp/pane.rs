@@ -137,19 +137,32 @@ pub fn is_valid_entry_name(name: &str) -> bool {
     !name.is_empty() && !name.contains('/') && !name.contains('\0') && name != "." && name != ".."
 }
 
-/// Remote preview whitelist: small images, text-like files and PDFs.
-pub fn remote_preview_supported(name: &str) -> bool {
-    const EXTENSIONS: &[&str] = &[
-        // images
-        "png", "jpg", "jpeg", "gif", "bmp", "webp", "heic", "tiff", "svg", // text
-        "txt", "md", "log", "json", "yaml", "yml", "toml", "conf", "cfg", "ini", "csv", "xml",
-        "html", "css", "js", "ts", "sh", "py", "rb", "go", "rs", "sql", "env", // documents
-        "pdf",
-    ];
+fn has_extension(name: &str, extensions: &[&str]) -> bool {
     std::path::Path::new(name)
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|ext| EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .is_some_and(|ext| extensions.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
+/// Text-like files: previewed in-app in a scrollable modal.
+pub fn is_text_name(name: &str) -> bool {
+    has_extension(
+        name,
+        &[
+            "txt", "md", "log", "json", "yaml", "yml", "toml", "conf", "cfg", "ini", "csv",
+            "xml", "html", "css", "js", "ts", "sh", "py", "rb", "go", "rs", "sql", "env",
+        ],
+    )
+}
+
+/// Image files: decoded in Rust and previewed in-app as half-block cells.
+pub fn is_visual_name(name: &str) -> bool {
+    has_extension(name, &["png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff"])
+}
+
+/// Remote preview whitelist: small images, text-like files and PDFs.
+pub fn remote_preview_supported(name: &str) -> bool {
+    is_text_name(name) || is_visual_name(name)
 }
 
 pub fn human_size(bytes: u64) -> String {
@@ -269,7 +282,10 @@ mod tests {
     fn remote_preview_whitelist() {
         assert!(remote_preview_supported("photo.PNG"));
         assert!(remote_preview_supported("notes.md"));
-        assert!(remote_preview_supported("doc.pdf"));
+        assert!(is_visual_name("shot.webp"));
+        assert!(is_text_name("config.toml"));
+        // no pure-rust renderer for these: not previewable
+        assert!(!remote_preview_supported("doc.pdf"));
         assert!(!remote_preview_supported("archive.tar.gz"));
         assert!(!remote_preview_supported("binary"));
         assert!(!remote_preview_supported("app.exe"));

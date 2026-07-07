@@ -28,6 +28,10 @@ pub enum Modal {
     Transfer { direction: Direction, name: String, transferred: u64, total: u64 },
     Rename { entry: FsEntry, input: String },
     ConfirmDelete(FsEntry),
+    /// In-app scrollable text preview.
+    Preview { name: String, lines: Vec<String>, scroll: usize },
+    /// In-app image preview, pre-rendered as half-block rows.
+    ImagePreview { name: String, lines: Vec<ratatui::text::Line<'static>> },
     Fatal(String),
 }
 
@@ -62,8 +66,21 @@ pub struct SftpScreen {
     worker: WorkerHandle,
 }
 
+fn preview_tmp_dir() -> PathBuf {
+    std::env::temp_dir().join("no-more-termius-preview")
+}
+
+impl Drop for SftpScreen {
+    fn drop(&mut self) {
+        // Never leave downloaded preview copies behind.
+        let _ = std::fs::remove_dir_all(preview_tmp_dir());
+    }
+}
+
 impl SftpScreen {
     pub fn new(conn: &Connection) -> Self {
+        // Clean leftovers from previous runs (e.g. after a crash).
+        let _ = std::fs::remove_dir_all(preview_tmp_dir());
         let worker = WorkerHandle::spawn(ConnectParams {
             host: conn.host.clone(),
             port: conn.port,
@@ -217,7 +234,7 @@ impl SftpScreen {
             },
             SftpEvent::PreviewReady(path) => {
                 self.modal = None;
-                self.quick_look(&path);
+                self.dispatch_preview(path, true);
             }
             SftpEvent::Fatal(msg) => {
                 self.modal = Some(Modal::Fatal(msg));
@@ -399,6 +416,24 @@ impl SftpScreen {
                 }
                 _ => self.modal = Some(Modal::ConfirmDelete(entry)),
             },
+            Some(Modal::ImagePreview { name, lines }) => match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {}
+                _ => self.modal = Some(Modal::ImagePreview { name, lines }),
+            },
+            Some(Modal::Preview { name, lines, mut scroll }) => {
+                let max = lines.len().saturating_sub(1);
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => return,
+                    KeyCode::Down | KeyCode::Char('j') => scroll = (scroll + 1).min(max),
+                    KeyCode::Up | KeyCode::Char('k') => scroll = scroll.saturating_sub(1),
+                    KeyCode::PageDown => scroll = (scroll + 20).min(max),
+                    KeyCode::PageUp => scroll = scroll.saturating_sub(20),
+                    KeyCode::Home | KeyCode::Char('g') => scroll = 0,
+                    KeyCode::End | KeyCode::Char('G') => scroll = max,
+                    _ => {}
+                }
+                self.modal = Some(Modal::Preview { name, lines, scroll });
+            }
             Some(Modal::Fatal(_)) => self.exit = true,
             None => {}
         }
@@ -437,8 +472,9 @@ impl SftpScreen {
         }
     }
 
-    /// Space: Quick Look preview. Local files open directly; remote files are
-    /// downloaded to a temp path first (small images/text/pdf only).
+    /// Space: preview. Text opens in an in-app modal; images/pdf render in
+    /// the terminal via timg. Remote files are downloaded to a temp path
+    /// first (small images/text/pdf only).
     fn preview_selected(&mut self) {
         const MAX_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
         let Some(entry) = self.active_pane().selected_entry().cloned() else {
@@ -449,13 +485,10 @@ impl SftpScreen {
             return;
         }
         match self.active {
-            Side::Local => {
-                let path = entry.path.clone();
-                self.quick_look(&path);
-            }
+            Side::Local => self.dispatch_preview(entry.path.clone(), false),
             Side::Remote => {
                 if !pane::remote_preview_supported(&entry.name) {
-                    self.set_status("remote preview supports images, text files and pdf");
+                    self.set_status("remote preview supports images and text files");
                     return;
                 }
                 if entry.size > MAX_PREVIEW_BYTES {
@@ -466,7 +499,7 @@ impl SftpScreen {
                     ));
                     return;
                 }
-                let tmp_dir = std::env::temp_dir().join("no-more-termius-preview");
+                let tmp_dir = preview_tmp_dir();
                 if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
                     self.set_status(format!("preview failed: {e}"));
                     return;
@@ -499,20 +532,64 @@ impl SftpScreen {
         }
     }
 
-    fn quick_look(&mut self, path: &std::path::Path) {
-        let spawned = std::process::Command::new("qlmanage")
-            .arg("-p")
-            .arg(path)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-        match spawned {
-            Ok(_) => self.set_status(format!(
-                "previewing {}",
-                path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
-            )),
+    /// Route a file to the right in-app previewer. Temp copies downloaded
+    /// from the remote are always deleted after their content is consumed.
+    fn dispatch_preview(&mut self, path: PathBuf, is_temp: bool) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if pane::is_text_name(&name) {
+            self.open_text_preview(&name, &path);
+        } else if pane::is_visual_name(&name) {
+            self.open_image_preview(&name, &path);
+        } else {
+            self.set_status("no preview for this file type (images and text only)");
+        }
+        if is_temp {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    /// Decode an image in Rust and pre-render it as half-block rows sized to
+    /// the current terminal.
+    fn open_image_preview(&mut self, name: &str, path: &std::path::Path) {
+        let (cols, rows) = ratatui::crossterm::terminal::size().unwrap_or((80, 24));
+        let max_w = cols.saturating_sub(8).max(10) as u32;
+        let max_h_px = (rows.saturating_sub(6).max(5) as u32) * 2;
+        match image::open(path) {
+            Ok(img) => {
+                let lines = image_to_halfblocks(&img, max_w, max_h_px);
+                self.modal = Some(Modal::ImagePreview {
+                    name: name.to_string(),
+                    lines,
+                });
+            }
             Err(e) => self.set_status(format!("preview failed: {e}")),
         }
+    }
+
+    fn open_text_preview(&mut self, name: &str, path: &std::path::Path) {
+        const MAX_TEXT_BYTES: usize = 256 * 1024;
+        const MAX_LINES: usize = 5000;
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.set_status(format!("preview failed: {e}"));
+                return;
+            }
+        };
+        let truncated_bytes = bytes.len() > MAX_TEXT_BYTES;
+        let text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_TEXT_BYTES)]);
+        let mut lines: Vec<String> = text.lines().take(MAX_LINES).map(String::from).collect();
+        if truncated_bytes || text.lines().count() > MAX_LINES {
+            lines.push("… (truncated)".into());
+        }
+        self.modal = Some(Modal::Preview {
+            name: name.to_string(),
+            lines,
+            scroll: 0,
+        });
     }
 
     fn do_delete(&mut self, entry: &FsEntry) {
@@ -683,6 +760,41 @@ impl SftpScreen {
             Side::Remote => &mut self.remote,
         }
     }
+}
+
+/// Render an image as terminal half-blocks: each cell shows two vertically
+/// stacked pixels via `▀` with independent fg (top) and bg (bottom) colors.
+fn image_to_halfblocks(
+    img: &image::DynamicImage,
+    max_w: u32,
+    max_h_px: u32,
+) -> Vec<ratatui::text::Line<'static>> {
+    use ratatui::style::{Color, Style};
+    use ratatui::text::{Line, Span};
+
+    let thumb = img.thumbnail(max_w, max_h_px);
+    let rgb = thumb.to_rgb8();
+    let (width, height) = rgb.dimensions();
+    let mut lines = Vec::with_capacity(height.div_ceil(2) as usize);
+    for y in (0..height).step_by(2) {
+        let mut spans = Vec::with_capacity(width as usize);
+        for x in 0..width {
+            let top = rgb.get_pixel(x, y);
+            let bottom = if y + 1 < height {
+                *rgb.get_pixel(x, y + 1)
+            } else {
+                *top
+            };
+            spans.push(Span::styled(
+                "▀",
+                Style::default()
+                    .fg(Color::Rgb(top[0], top[1], top[2]))
+                    .bg(Color::Rgb(bottom[0], bottom[1], bottom[2])),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    lines
 }
 
 fn copy_to_clipboard(text: &str) -> Result<(), String> {

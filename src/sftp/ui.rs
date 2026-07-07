@@ -282,6 +282,42 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
             ];
             render_box(frame, " Delete? ", lines, Color::Red);
         }
+        Modal::ImagePreview { name, lines } => {
+            let img_w = lines.iter().map(|l| l.width()).max().unwrap_or(1) as u16;
+            let img_h = lines.len() as u16;
+            let area = centered_rect(img_w + 2, img_h + 2, frame.area());
+            frame.render_widget(Clear, area);
+            frame.render_widget(
+                Paragraph::new(lines.clone())
+                    .block(theme::modal(format!("{name} — q close"), theme::ACCENT)),
+                area,
+            );
+        }
+        Modal::Preview { name, lines, scroll } => {
+            let frame_area = frame.area();
+            let area = Rect {
+                x: frame_area.x + 2,
+                y: frame_area.y + 1,
+                width: frame_area.width.saturating_sub(4),
+                height: frame_area.height.saturating_sub(2),
+            };
+            frame.render_widget(Clear, area);
+            let total = lines.len();
+            let visible: Vec<Line> = lines
+                .iter()
+                .skip(*scroll)
+                .take(area.height.saturating_sub(2) as usize)
+                .map(|l| Line::raw(l.clone()))
+                .collect();
+            let title = format!(
+                "{name} — {}/{total} · j/k scroll · q close",
+                (*scroll + 1).min(total)
+            );
+            frame.render_widget(
+                Paragraph::new(visible).block(theme::modal(title, theme::ACCENT)),
+                area,
+            );
+        }
         Modal::Fatal(msg) => {
             let lines = vec![
                 Line::raw(msg.clone()),
