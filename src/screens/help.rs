@@ -4,7 +4,7 @@
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
 pub struct HelpSection {
@@ -103,6 +103,9 @@ pub fn for_sftp() -> HelpOverlay {
                     ("Enter / l (on dir)", "enter directory"),
                     ("h / Backspace", "parent directory"),
                     ("/", "filter files in active pane"),
+                    ("Space", "preview file (Quick Look)"),
+                    ("R", "rename selection"),
+                    ("D", "delete selection (asks y/n)"),
                     ("j/k ↑/↓ PgUp/PgDn g/G", "move selection"),
                     (".", "show/hide hidden files"),
                     ("r", "refresh both panes"),
@@ -164,12 +167,7 @@ impl HelpOverlay {
 
         frame.render_widget(Clear, area);
         frame.render_widget(
-            Paragraph::new(lines).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan))
-                    .title(self.title),
-            ),
+            Paragraph::new(lines).block(crate::theme::modal(self.title.trim(), Color::Cyan)),
             area,
         );
     }

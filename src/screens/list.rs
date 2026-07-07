@@ -8,10 +8,11 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::Action;
+use crate::theme;
 use crate::model::{now_epoch, Connection};
 use crate::screens::help::centered_rect;
 
@@ -223,17 +224,9 @@ impl ListScreen {
         .areas(frame.area());
 
         // Search box: focused via `/`, highlighted while active.
-        let (search_title, search_style) = if self.searching {
-            (" Search ", Style::default().fg(Color::Cyan))
-        } else {
-            (" Search (/) ", Style::default().fg(Color::DarkGray))
-        };
-        let search = Paragraph::new(self.query.as_str()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(search_style)
-                .title(search_title),
-        );
+        let search_title = if self.searching { "Search" } else { "Search (/)" };
+        let search = Paragraph::new(self.query.as_str())
+            .block(theme::panel(search_title, self.searching));
         frame.render_widget(search, search_area);
         if self.searching && self.modal.is_none() {
             frame.set_cursor_position(Position::new(
@@ -243,6 +236,8 @@ impl ListScreen {
         }
 
         // Connection list
+        let panel_title = format!("Connections ({}/{})", self.filtered.len(), connections.len());
+        let list_panel = theme::panel(panel_title, !self.searching);
         if self.filtered.is_empty() {
             let msg = if connections.is_empty() {
                 "No connections yet — press 'a' to add one"
@@ -251,8 +246,9 @@ impl ListScreen {
             };
             frame.render_widget(
                 Paragraph::new(msg)
-                    .style(Style::default().fg(Color::DarkGray))
-                    .centered(),
+                    .style(Style::default().fg(theme::DIM))
+                    .centered()
+                    .block(list_panel),
                 list_area,
             );
         } else {
@@ -263,9 +259,9 @@ impl ListScreen {
                 .map(|&i| {
                     let c = &connections[i];
                     let star = if c.favorite {
-                        Span::styled("★ ", Style::default().fg(Color::Yellow))
+                        Span::styled(" ★ ", Style::default().fg(theme::FAVORITE))
                     } else {
-                        Span::raw("  ")
+                        Span::raw("   ")
                     };
                     let mut spans = vec![
                         star,
@@ -275,13 +271,13 @@ impl ListScreen {
                         ),
                         Span::styled(
                             format!("  {}", c.label()),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(theme::DIM),
                         ),
                     ];
                     if let Some(ts) = c.last_used {
                         spans.push(Span::styled(
                             format!("  {}", relative_time(now.saturating_sub(ts))),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(theme::DIM),
                         ));
                     }
                     ListItem::new(Line::from(spans))
@@ -290,28 +286,35 @@ impl ListScreen {
 
             self.list_state.select(Some(self.selected));
             let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL))
-                .highlight_style(
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .highlight_symbol("▶ ");
+                .block(list_panel)
+                .highlight_style(theme::selection())
+                .highlight_symbol(theme::SELECTION_SYMBOL);
             frame.render_stateful_widget(list, list_area, &mut self.list_state);
         }
 
         // Footer
-        let footer = self.status.clone().unwrap_or_else(|| {
-            if self.searching {
-                "type to filter · Enter connect · Esc done · ↑/↓ move".into()
-            } else {
-                "Enter connect · / search · s sftp · a add · e edit · y dup · f fav · d del · q quit · ? help".into()
-            }
-        });
-        frame.render_widget(
-            Paragraph::new(footer).style(Style::default().fg(Color::DarkGray)),
-            footer_area,
-        );
+        let footer = match &self.status {
+            Some(status) => theme::status_line(status),
+            None if self.searching => theme::hints(&[
+                ("type", "filter"),
+                ("Enter", "connect"),
+                ("Esc", "done"),
+                ("↑/↓", "move"),
+            ]),
+            None => theme::hints(&[
+                ("Enter", "connect"),
+                ("/", "search"),
+                ("s", "sftp"),
+                ("a", "add"),
+                ("e", "edit"),
+                ("y", "dup"),
+                ("f", "fav"),
+                ("d", "del"),
+                ("q", "quit"),
+                ("?", "help"),
+            ]),
+        };
+        frame.render_widget(Paragraph::new(footer), footer_area);
 
         // Modals
         match &self.modal {
@@ -346,20 +349,15 @@ fn render_confirm(frame: &mut Frame, title: &str, message: &str) {
         Line::raw(message),
         Line::default(),
         Line::from(vec![
-            Span::styled("y", Style::default().fg(Color::Green).bold()),
+            Span::styled("y", Style::default().fg(theme::OK).bold()),
             Span::raw(" yes   "),
-            Span::styled("n", Style::default().fg(Color::Red).bold()),
+            Span::styled("n", Style::default().fg(theme::DANGER).bold()),
             Span::raw(" no"),
         ])
         .centered(),
     ];
     frame.render_widget(
-        Paragraph::new(body).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow))
-                .title(title),
-        ),
+        Paragraph::new(body).block(theme::modal(title.trim(), Color::Yellow)),
         area,
     );
 }

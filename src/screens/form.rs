@@ -4,12 +4,13 @@ use std::path::PathBuf;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Position};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::Action;
+use crate::theme;
 use crate::model::Connection;
 
 const FIELD_LABELS: [&str; 5] = ["Name", "Host", "Port", "User", "Key file"];
@@ -164,11 +165,11 @@ impl FormScreen {
 
     pub fn render(&self, frame: &mut Frame) {
         let title = if self.editing.is_some() {
-            " Edit connection "
+            "Edit connection"
         } else {
-            " New connection "
+            "New connection"
         };
-        let outer = Block::default().borders(Borders::ALL).title(title);
+        let outer = theme::panel(title, true);
         let area = frame.area();
         let inner = outer.inner(area);
         frame.render_widget(outer, area);
@@ -188,27 +189,18 @@ impl FormScreen {
 
         for (i, label) in FIELD_LABELS.iter().enumerate() {
             let focused = self.focus == i;
-            let style = if focused {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default()
-            };
             let mut text = self.fields[i].clone();
             if i == 4 && text.is_empty() {
                 text = "(optional — Ctrl-o to browse)".into();
             }
             let value_style = if i == 4 && self.fields[4].is_empty() {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme::DIM)
             } else {
                 Style::default()
             };
             frame.render_widget(
-                Paragraph::new(Line::styled(text, value_style)).block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(style)
-                        .title(format!(" {label} ")),
-                ),
+                Paragraph::new(Line::styled(text, value_style))
+                    .block(theme::panel(*label, focused)),
                 rows[i],
             );
             if focused {
@@ -220,22 +212,24 @@ impl FormScreen {
         }
 
         let fav_style = if self.focus == FAVORITE_FIELD {
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            Style::default().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
-        let fav_mark = if self.favorite { "x" } else { " " };
+        let fav_mark = if self.favorite { "★" } else { " " };
         frame.render_widget(
             Paragraph::new(format!("  [{fav_mark}] Favorite  (Space toggles)")).style(fav_style),
             rows[FAVORITE_FIELD],
         );
 
         let footer = match &self.error {
-            Some(err) => Line::styled(err.clone(), Style::default().fg(Color::Red)),
-            None => Line::styled(
-                "Enter save · Esc cancel · Tab next field · ? help",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Some(err) => Line::styled(format!(" {err}"), Style::default().fg(theme::DANGER)),
+            None => theme::hints(&[
+                ("Enter", "save"),
+                ("Esc", "cancel"),
+                ("Tab", "next field"),
+                ("?", "help"),
+            ]),
         };
         frame.render_widget(Paragraph::new(footer), rows[7]);
     }

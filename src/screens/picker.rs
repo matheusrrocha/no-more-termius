@@ -8,12 +8,13 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::Action;
+use crate::theme;
 
 struct PickEntry {
     name: String,
@@ -202,13 +203,13 @@ impl PickerScreen {
                 let e = &self.entries[i];
                 if e.is_dir {
                     ListItem::new(Line::from(Span::styled(
-                        format!("{}/", e.name),
+                        format!(" {}/", e.name),
                         Style::default()
-                            .fg(Color::Blue)
+                            .fg(theme::DIR)
                             .add_modifier(Modifier::BOLD),
                     )))
                 } else {
-                    ListItem::new(e.name.clone())
+                    ListItem::new(format!(" {}", e.name))
                 }
             })
             .collect();
@@ -219,25 +220,27 @@ impl PickerScreen {
             Some(self.selected)
         });
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .highlight_style(
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("▶ ");
+            .block(theme::panel(title.trim(), true))
+            .highlight_style(theme::selection())
+            .highlight_symbol(theme::SELECTION_SYMBOL);
         frame.render_stateful_widget(list, list_area, &mut self.list_state);
 
         let footer = match &self.error {
-            Some(err) => Line::styled(err.clone(), Style::default().fg(Color::Red)),
-            None if self.filtering => Line::styled(
-                "type to filter · Enter open/pick · Esc done",
-                Style::default().fg(Color::DarkGray),
-            ),
-            None => Line::styled(
-                "Enter/l open/pick · h parent · / filter · . hidden · j/k move · Esc cancel · ? help",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Some(err) => Line::styled(format!(" {err}"), Style::default().fg(theme::DANGER)),
+            None if self.filtering => theme::hints(&[
+                ("type", "filter"),
+                ("Enter", "open/pick"),
+                ("Esc", "done"),
+            ]),
+            None => theme::hints(&[
+                ("Enter/l", "open/pick"),
+                ("h", "parent"),
+                ("/", "filter"),
+                (".", "hidden"),
+                ("j/k", "move"),
+                ("Esc", "cancel"),
+                ("?", "help"),
+            ]),
         };
         frame.render_widget(Paragraph::new(footer), footer_area);
     }
