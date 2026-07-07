@@ -1,6 +1,7 @@
 //! Dual-pane SFTP browser screen: local filesystem on the left, remote SFTP
 //! on the right. Overwrites ALWAYS require confirmation.
 
+pub mod graphics;
 pub mod pane;
 pub mod ui;
 pub mod worker;
@@ -31,8 +32,13 @@ pub enum Modal {
     ConfirmDelete(FsEntry),
     /// In-app scrollable text preview.
     Preview { name: String, lines: Vec<String>, scroll: usize },
-    /// In-app image preview, pre-rendered as half-block rows.
-    ImagePreview { name: String, lines: Vec<ratatui::text::Line<'static>> },
+    /// In-app image preview: pixel-perfect via a terminal graphics protocol
+    /// when available, otherwise pre-rendered quadrant-block rows.
+    ImagePreview {
+        name: String,
+        lines: Vec<ratatui::text::Line<'static>>,
+        graphics: Option<graphics::EncodedImage>,
+    },
     Fatal(String),
 }
 
@@ -70,6 +76,7 @@ pub struct SftpScreen {
     /// True while the first listing (of the configured dir) is in flight,
     /// so a failure can fall back to the remote home.
     awaiting_initial: bool,
+    graphics_protocol: Option<graphics::Protocol>,
     worker: WorkerHandle,
 }
 
@@ -118,6 +125,7 @@ impl SftpScreen {
             initial_remote: conn.sftp_dir.clone(),
             remote_home: None,
             awaiting_initial: false,
+            graphics_protocol: graphics::detect(),
             worker,
         }
     }
@@ -446,9 +454,15 @@ impl SftpScreen {
                 }
                 _ => self.modal = Some(Modal::ConfirmDelete(entry)),
             },
-            Some(Modal::ImagePreview { name, lines }) => match key.code {
+            Some(Modal::ImagePreview { name, lines, graphics }) => match key.code {
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {}
-                _ => self.modal = Some(Modal::ImagePreview { name, lines }),
+                _ => {
+                    self.modal = Some(Modal::ImagePreview {
+                        name,
+                        lines,
+                        graphics,
+                    });
+                }
             },
             Some(Modal::Preview { name, lines, mut scroll }) => {
                 let max = lines.len().saturating_sub(1);
@@ -593,22 +607,41 @@ impl SftpScreen {
         }
     }
 
-    /// Decode an image in Rust and pre-render it as quadrant-block rows
-    /// (2×2 pixels per cell) sized to the current terminal.
+    /// Decode an image in Rust and show it pixel-perfect via the terminal's
+    /// graphics protocol when available; otherwise pre-render quadrant-block
+    /// rows (2×2 pixels per cell) sized to the current terminal.
     fn open_image_preview(&mut self, name: &str, path: &std::path::Path) {
         let (cols, rows) = ratatui::crossterm::terminal::size().unwrap_or((80, 24));
-        let max_w_px = (cols.saturating_sub(4).max(10) as u32) * 2;
-        let max_h_px = (rows.saturating_sub(3).max(5) as u32) * 2;
-        match image::open(path) {
-            Ok(img) => {
-                let lines = image_to_quadrants(&img, max_w_px, max_h_px);
+        let img = match image::open(path) {
+            Ok(img) => img,
+            Err(e) => {
+                self.set_status(format!("preview failed: {e}"));
+                return;
+            }
+        };
+
+        if let Some(protocol) = self.graphics_protocol {
+            let box_cols = (cols as u32 * 4 / 5).saturating_sub(2).max(10) as u16;
+            let box_rows = (rows as u32 * 4 / 5).saturating_sub(2).max(5) as u16;
+            if let Some(encoded) = graphics::prepare(&img, box_cols, box_rows) {
+                let _ = protocol; // protocol is re-detected by the app when emitting
                 self.modal = Some(Modal::ImagePreview {
                     name: name.to_string(),
-                    lines,
+                    lines: Vec::new(),
+                    graphics: Some(encoded),
                 });
+                return;
             }
-            Err(e) => self.set_status(format!("preview failed: {e}")),
         }
+
+        let max_w_px = (cols.saturating_sub(4).max(10) as u32) * 2;
+        let max_h_px = (rows.saturating_sub(3).max(5) as u32) * 2;
+        let lines = image_to_quadrants(&img, max_w_px, max_h_px);
+        self.modal = Some(Modal::ImagePreview {
+            name: name.to_string(),
+            lines,
+            graphics: None,
+        });
     }
 
     fn open_text_preview(&mut self, name: &str, path: &std::path::Path) {
