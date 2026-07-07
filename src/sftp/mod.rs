@@ -593,15 +593,15 @@ impl SftpScreen {
         }
     }
 
-    /// Decode an image in Rust and pre-render it as half-block rows sized to
-    /// the current terminal.
+    /// Decode an image in Rust and pre-render it as quadrant-block rows
+    /// (2×2 pixels per cell) sized to the current terminal.
     fn open_image_preview(&mut self, name: &str, path: &std::path::Path) {
         let (cols, rows) = ratatui::crossterm::terminal::size().unwrap_or((80, 24));
-        let max_w = cols.saturating_sub(8).max(10) as u32;
-        let max_h_px = (rows.saturating_sub(6).max(5) as u32) * 2;
+        let max_w_px = (cols.saturating_sub(4).max(10) as u32) * 2;
+        let max_h_px = (rows.saturating_sub(3).max(5) as u32) * 2;
         match image::open(path) {
             Ok(img) => {
-                let lines = image_to_halfblocks(&img, max_w, max_h_px);
+                let lines = image_to_quadrants(&img, max_w_px, max_h_px);
                 self.modal = Some(Modal::ImagePreview {
                     name: name.to_string(),
                     lines,
@@ -804,34 +804,64 @@ impl SftpScreen {
     }
 }
 
-/// Render an image as terminal half-blocks: each cell shows two vertically
-/// stacked pixels via `▀` with independent fg (top) and bg (bottom) colors.
-fn image_to_halfblocks(
+/// Quadrant glyph for each 2×2 "bright pixels" bitmask (bits: TL TR BL BR).
+const QUADRANTS: [&str; 16] = [
+    " ", "▗", "▖", "▄", "▝", "▐", "▞", "▟", "▘", "▚", "▌", "▙", "▀", "▜", "▛", "█",
+];
+
+/// Render an image as quadrant blocks: each terminal cell encodes a 2×2
+/// pixel block quantized to two colors, doubling the effective resolution
+/// of the classic half-block approach in both axes.
+fn image_to_quadrants(
     img: &image::DynamicImage,
-    max_w: u32,
+    max_w_px: u32,
     max_h_px: u32,
 ) -> Vec<ratatui::text::Line<'static>> {
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
 
-    let thumb = img.thumbnail(max_w, max_h_px);
+    let thumb = img.thumbnail(max_w_px, max_h_px);
     let rgb = thumb.to_rgb8();
     let (width, height) = rgb.dimensions();
+    let px = |x: u32, y: u32| -> [u8; 3] {
+        let p = rgb.get_pixel(x.min(width - 1), y.min(height - 1));
+        [p[0], p[1], p[2]]
+    };
+    let luma = |c: [u8; 3]| 0.299 * c[0] as f32 + 0.587 * c[1] as f32 + 0.114 * c[2] as f32;
+    let avg = |cs: &[[u8; 3]]| -> [u8; 3] {
+        let n = cs.len().max(1) as u32;
+        let sum = cs.iter().fold([0u32; 3], |acc, c| {
+            [acc[0] + c[0] as u32, acc[1] + c[1] as u32, acc[2] + c[2] as u32]
+        });
+        [(sum[0] / n) as u8, (sum[1] / n) as u8, (sum[2] / n) as u8]
+    };
+
     let mut lines = Vec::with_capacity(height.div_ceil(2) as usize);
     for y in (0..height).step_by(2) {
-        let mut spans = Vec::with_capacity(width as usize);
-        for x in 0..width {
-            let top = rgb.get_pixel(x, y);
-            let bottom = if y + 1 < height {
-                *rgb.get_pixel(x, y + 1)
+        let mut spans = Vec::with_capacity(width.div_ceil(2) as usize);
+        for x in (0..width).step_by(2) {
+            let block = [px(x, y), px(x + 1, y), px(x, y + 1), px(x + 1, y + 1)];
+            let mean = block.iter().map(|&c| luma(c)).sum::<f32>() / 4.0;
+            let mut mask = 0usize;
+            let (mut bright, mut dark) = (Vec::new(), Vec::new());
+            for (i, &c) in block.iter().enumerate() {
+                if luma(c) >= mean {
+                    mask |= 8 >> i; // bit order: TL TR BL BR
+                    bright.push(c);
+                } else {
+                    dark.push(c);
+                }
+            }
+            let (glyph, fg, bg) = if dark.is_empty() {
+                ("█", avg(&bright), [0, 0, 0])
             } else {
-                *top
+                (QUADRANTS[mask], avg(&bright), avg(&dark))
             };
             spans.push(Span::styled(
-                "▀",
+                glyph,
                 Style::default()
-                    .fg(Color::Rgb(top[0], top[1], top[2]))
-                    .bg(Color::Rgb(bottom[0], bottom[1], bottom[2])),
+                    .fg(Color::Rgb(fg[0], fg[1], fg[2]))
+                    .bg(Color::Rgb(bg[0], bg[1], bg[2])),
             ));
         }
         lines.push(Line::from(spans));
@@ -875,5 +905,42 @@ mod tests {
         assert_eq!(expand_remote("~/www", home), PathBuf::from("/home/deploy/www"));
         assert_eq!(expand_remote("/var/log", home), PathBuf::from("/var/log"));
         assert_eq!(expand_remote("relative", home), PathBuf::from("relative"));
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+
+    #[test]
+    fn quadrant_renderer_maps_checkerboard() {
+        // 4x4 checkerboard: every 2x2 block has bright TL+BR → mask 1001 → "▚".
+        let mut img = image::RgbImage::new(4, 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                let v = if (x + y) % 2 == 0 { 255 } else { 0 };
+                img.put_pixel(x, y, image::Rgb([v, v, v]));
+            }
+        }
+        let lines = image_to_quadrants(&image::DynamicImage::ImageRgb8(img), 4, 4);
+        assert_eq!(lines.len(), 2);
+        for line in &lines {
+            assert_eq!(line.spans.len(), 2);
+            for span in &line.spans {
+                assert_eq!(span.content.as_ref(), "▚");
+            }
+        }
+    }
+
+    #[test]
+    fn quadrant_renderer_flat_color_is_solid() {
+        let mut img = image::RgbImage::new(2, 2);
+        for y in 0..2 {
+            for x in 0..2 {
+                img.put_pixel(x, y, image::Rgb([10, 200, 30]));
+            }
+        }
+        let lines = image_to_quadrants(&image::DynamicImage::ImageRgb8(img), 2, 2);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "█");
     }
 }

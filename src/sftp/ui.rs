@@ -295,12 +295,12 @@ fn render_modal(frame: &mut Frame, screen: &SftpScreen) {
         }
         Modal::Preview { name, lines, scroll } => {
             let frame_area = frame.area();
-            let area = Rect {
-                x: frame_area.x + 2,
-                y: frame_area.y + 1,
-                width: frame_area.width.saturating_sub(4),
-                height: frame_area.height.saturating_sub(2),
-            };
+            // 80% of the screen, centered.
+            let area = centered_rect(
+                (frame_area.width as u32 * 4 / 5) as u16,
+                (frame_area.height as u32 * 4 / 5) as u16,
+                frame_area,
+            );
             frame.render_widget(Clear, area);
             let total = lines.len();
             let visible: Vec<Line> = lines
