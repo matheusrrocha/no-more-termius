@@ -153,6 +153,7 @@ impl ListScreen {
                     return Action::OpenSftp(idx);
                 }
             }
+            KeyCode::Char('r') => return Action::Reload,
             KeyCode::Char('q') => return Action::Quit,
             KeyCode::Esc => {
                 if self.query.is_empty() {
@@ -310,6 +311,7 @@ impl ListScreen {
                 ("y", "dup"),
                 ("f", "fav"),
                 ("d", "del"),
+                ("r", "reload"),
                 ("q", "quit"),
                 ("?", "help"),
             ]),

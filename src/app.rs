@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -37,6 +37,7 @@ pub enum Action {
     OpenSftp(usize),
     Delete(usize),
     ToggleFavorite(usize),
+    Reload,
     ImportAccept,
     ImportDecline,
 }
@@ -65,7 +66,7 @@ impl App {
             Some(store) => store,
             None => {
                 // First run: offer to import from ~/.ssh/config.
-                let store = Store::new_empty(path);
+                let mut store = Store::new_empty(path);
                 let imported = read_ssh_config_hosts();
                 if imported.is_empty() {
                     store.save()?;
@@ -98,6 +99,16 @@ impl App {
                 if sftp.exit {
                     self.close_sftp();
                 }
+            }
+
+            // Pick up saves made by other running instances. Only on the
+            // list screen with no modal open: forms and modals hold store
+            // indices that a reload would shift.
+            if self.screen == Screen::List
+                && self.list.modal.is_none()
+                && self.store.changed_on_disk()
+            {
+                self.reload_store()?;
             }
 
             terminal.draw(|frame| self.render(frame))?;
@@ -173,11 +184,17 @@ impl App {
                 None => Action::None,
             },
             Screen::Sftp => {
+                let mut shell = None;
                 if let Some(sftp) = &mut self.sftp {
                     sftp.on_key(key);
                     if sftp.exit {
                         self.close_sftp();
+                    } else if let Some(dir) = sftp.shell_request.take() {
+                        shell = Some((sftp.conn.clone(), dir));
                     }
+                }
+                if let Some((conn, dir)) = shell {
+                    self.open_remote_shell(&conn, &dir, terminal)?;
                 }
                 Action::None
             }
@@ -277,6 +294,36 @@ impl App {
             Action::ImportDecline => {
                 self.store.save()?;
             }
+            Action::Reload => {
+                self.reload_store()?;
+                self.list.status = Some(format!(
+                    "Reloaded {} connection(s)",
+                    self.store.connections.len()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Re-read the store and refresh the list, keeping the selection on the
+    /// same connection when it still exists.
+    fn reload_store(&mut self) -> Result<()> {
+        let keep = self
+            .list
+            .selected_store_idx()
+            .and_then(|i| self.store.connections.get(i))
+            .map(|c| c.name.clone());
+        self.store.reload()?;
+        self.list.refilter(&self.store.connections);
+        if let Some(name) = keep {
+            if let Some(pos) = self
+                .list
+                .filtered
+                .iter()
+                .position(|&i| self.store.connections[i].name == name)
+            {
+                self.list.selected = pos;
+            }
         }
         Ok(())
     }
@@ -305,6 +352,28 @@ impl App {
             Err(e) => {
                 self.list.status = Some(format!("failed to launch ssh: {e}"));
             }
+        }
+        Ok(())
+    }
+
+    /// Suspend the TUI and open an interactive ssh shell in `dir` on the
+    /// remote host; the SFTP screen resumes when the shell exits.
+    fn open_remote_shell(
+        &mut self,
+        conn: &Connection,
+        dir: &Path,
+        terminal: &mut DefaultTerminal,
+    ) -> Result<()> {
+        let mut cmd = ssh::build_shell_command(conn, dir);
+
+        ratatui::restore();
+        let status = cmd.status();
+        *terminal = ratatui::init();
+        terminal.clear().context("re-initializing terminal")?;
+        self.gfx_dirty = true;
+
+        if let Some(sftp) = &mut self.sftp {
+            sftp.shell_returned(status);
         }
         Ok(())
     }

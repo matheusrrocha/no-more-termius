@@ -36,7 +36,7 @@ pub fn render(frame: &mut Frame, screen: &mut SftpScreen) {
         &mut screen.remote,
         screen.active == Side::Remote,
         filtering && screen.active == Side::Remote,
-        &format!("Remote ({})", screen.conn_name),
+        &format!("Remote ({})", screen.conn.name),
         remote_ready,
     );
 
@@ -54,6 +54,7 @@ pub fn render(frame: &mut Frame, screen: &mut SftpScreen) {
             ("Space", "preview"),
             ("R", "rename"),
             ("D", "delete"),
+            ("!", "shell"),
             ("q", "back"),
             ("?", "help"),
         ]),

@@ -58,7 +58,11 @@ enum PendingStat {
 }
 
 pub struct SftpScreen {
-    pub conn_name: String,
+    /// Connection this browser was opened for (also drives the `!` shell).
+    pub conn: Connection,
+    /// Set by `!`: the app should suspend the TUI and open an interactive
+    /// ssh shell in this remote directory, then return here.
+    pub shell_request: Option<PathBuf>,
     pub phase: Phase,
     pub local: PaneState,
     pub remote: PaneState,
@@ -111,7 +115,8 @@ impl SftpScreen {
         remote.loading = true;
 
         Self {
-            conn_name: conn.name.clone(),
+            conn: conn.clone(),
+            shell_request: None,
             phase: Phase::Connecting,
             local,
             remote,
@@ -314,6 +319,15 @@ impl SftpScreen {
             KeyCode::Char('r') => {
                 self.refresh_local();
                 self.refresh_remote();
+            }
+            KeyCode::Char('!') => {
+                if self.active != Side::Remote {
+                    self.set_status("! opens a shell in the remote pane (Tab to switch)");
+                } else if matches!(self.phase, Phase::Connecting) {
+                    self.set_status("still connecting…");
+                } else {
+                    self.shell_request = Some(self.remote.cwd.clone());
+                }
             }
             KeyCode::Char('R') => {
                 if let Some(entry) = self.active_pane().selected_entry().cloned()
@@ -800,6 +814,18 @@ impl SftpScreen {
             },
         };
         self.worker.send(request);
+    }
+
+    /// Back from the `!` shell: report failures and re-list both panes,
+    /// since commands may have changed files anywhere.
+    pub fn shell_returned(&mut self, result: std::io::Result<std::process::ExitStatus>) {
+        match result {
+            Ok(exit) if !exit.success() => self.set_status(format!("shell exited with {exit}")),
+            Ok(_) => {}
+            Err(e) => self.set_status(format!("failed to launch ssh: {e}")),
+        }
+        self.refresh_local();
+        self.refresh_remote();
     }
 
     fn refresh_local(&mut self) {
