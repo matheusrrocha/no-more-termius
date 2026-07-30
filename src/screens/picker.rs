@@ -8,7 +8,7 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
@@ -199,17 +199,29 @@ impl PickerScreen {
         let items: Vec<ListItem> = self
             .filtered
             .iter()
-            .map(|&i| {
+            .enumerate()
+            .map(|(row, &i)| {
                 let e = &self.entries[i];
+                let selected = row == self.selected;
+                let fg = |color: Color| {
+                    if selected {
+                        theme::selected_fg(color)
+                    } else {
+                        color
+                    }
+                };
                 if e.is_dir {
                     ListItem::new(Line::from(Span::styled(
                         format!(" {}/", e.name),
                         Style::default()
-                            .fg(theme::DIR)
+                            .fg(fg(theme::DIR))
                             .add_modifier(Modifier::BOLD),
                     )))
                 } else {
-                    ListItem::new(format!(" {}", e.name))
+                    ListItem::new(Line::from(Span::styled(
+                        format!(" {}", e.name),
+                        Style::default().fg(fg(theme::TEXT)),
+                    )))
                 }
             })
             .collect();
@@ -221,8 +233,8 @@ impl PickerScreen {
         });
         let list = List::new(items)
             .block(theme::panel(title.trim(), true))
-            .highlight_style(theme::selection())
-            .highlight_symbol(theme::SELECTION_SYMBOL);
+            .highlight_style(theme::selection(true))
+            .highlight_symbol(theme::selection_symbol(true));
         frame.render_stateful_widget(list, list_area, &mut self.list_state);
 
         let footer = match &self.error {

@@ -98,7 +98,8 @@ fn render_pane(
     let items: Vec<ListItem> = pane
         .filtered
         .iter()
-        .map(|&i| {
+        .enumerate()
+        .map(|(row, &i)| {
             let e = &pane.entries[i];
             let mut name = e.name.clone();
             if e.is_dir {
@@ -112,12 +113,22 @@ fn render_pane(
                 human_size(e.size)
             };
             let padded = format!(" {name:<name_width$.name_width$} {size:>9}");
+            let selected = row == pane.selected;
+            let fg = |color: Color| {
+                if selected {
+                    theme::selected_fg(color)
+                } else {
+                    color
+                }
+            };
             let style = if e.is_dir {
-                Style::default().fg(theme::DIR).add_modifier(Modifier::BOLD)
-            } else if e.is_symlink {
-                Style::default().fg(theme::LINK)
-            } else {
                 Style::default()
+                    .fg(fg(theme::DIR))
+                    .add_modifier(Modifier::BOLD)
+            } else if e.is_symlink {
+                Style::default().fg(fg(theme::LINK))
+            } else {
+                Style::default().fg(fg(theme::TEXT))
             };
             ListItem::new(Line::styled(padded, style))
         })
@@ -130,8 +141,8 @@ fn render_pane(
     });
     let list = List::new(items)
         .block(block)
-        .highlight_style(theme::selection())
-        .highlight_symbol(theme::SELECTION_SYMBOL);
+        .highlight_style(theme::selection(active))
+        .highlight_symbol(theme::selection_symbol(active));
     frame.render_stateful_widget(list, area, &mut pane.list_state);
 }
 

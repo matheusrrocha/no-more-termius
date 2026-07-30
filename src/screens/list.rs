@@ -257,10 +257,19 @@ impl ListScreen {
             let items: Vec<ListItem> = self
                 .filtered
                 .iter()
-                .map(|&i| {
+                .enumerate()
+                .map(|(row, &i)| {
                     let c = &connections[i];
+                    let selected = row == self.selected;
+                    let fg = |color: Color| {
+                        if selected {
+                            theme::selected_fg(color)
+                        } else {
+                            color
+                        }
+                    };
                     let star = if c.favorite {
-                        Span::styled(" ★ ", Style::default().fg(theme::FAVORITE))
+                        Span::styled(" ★ ", Style::default().fg(fg(theme::FAVORITE)))
                     } else {
                         Span::raw("   ")
                     };
@@ -268,17 +277,19 @@ impl ListScreen {
                         star,
                         Span::styled(
                             c.name.clone(),
-                            Style::default().add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(fg(theme::TEXT))
+                                .add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(
                             format!("  {}", c.label()),
-                            Style::default().fg(theme::DIM),
+                            Style::default().fg(fg(theme::DIM)),
                         ),
                     ];
                     if let Some(ts) = c.last_used {
                         spans.push(Span::styled(
                             format!("  {}", relative_time(now.saturating_sub(ts))),
-                            Style::default().fg(theme::DIM),
+                            Style::default().fg(fg(theme::DIM)),
                         ));
                     }
                     ListItem::new(Line::from(spans))
@@ -288,8 +299,8 @@ impl ListScreen {
             self.list_state.select(Some(self.selected));
             let list = List::new(items)
                 .block(list_panel)
-                .highlight_style(theme::selection())
-                .highlight_symbol(theme::SELECTION_SYMBOL);
+                .highlight_style(theme::selection(true))
+                .highlight_symbol(theme::selection_symbol(true));
             frame.render_stateful_widget(list, list_area, &mut self.list_state);
         }
 
@@ -371,5 +382,64 @@ fn relative_time(secs: u64) -> String {
         3600..=86_399 => format!("{}h ago", secs / 3600),
         86_400..=604_799 => format!("{}d ago", secs / 86_400),
         _ => format!("{}w ago", secs / 604_800),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn conn(name: &str, favorite: bool) -> Connection {
+        Connection {
+            name: name.into(),
+            host: "example.com".into(),
+            port: 22,
+            user: Some("root".into()),
+            identity_file: None,
+            sftp_dir: None,
+            favorite,
+            last_used: Some(now_epoch() - 120),
+        }
+    }
+
+    /// ratatui paints `highlight_style` over the whole selected row, so any
+    /// foreground left on it must be one we picked for the selection bar —
+    /// a dim grey or the terminal default would be unreadable on it.
+    #[test]
+    fn selected_row_only_uses_readable_foregrounds() {
+        let connections = vec![conn("alpha", true), conn("beta", false)];
+        let mut screen = ListScreen::new();
+        screen.refilter(&connections);
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        terminal
+            .draw(|frame| screen.render(frame, &connections))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+
+        let bar_bg = theme::selection(true).bg.unwrap();
+        let readable = [
+            theme::selected_fg(theme::TEXT),
+            theme::selected_fg(theme::DIM),
+            theme::selected_fg(theme::FAVORITE),
+            theme::selection_symbol(true).style.fg.unwrap(),
+        ];
+        let glyphs_on_bar: Vec<_> = buffer
+            .content()
+            .iter()
+            .filter(|c| c.bg == bar_bg && !c.symbol().trim().is_empty())
+            .collect();
+
+        assert!(!glyphs_on_bar.is_empty(), "no selection bar was drawn");
+        for cell in glyphs_on_bar {
+            assert!(
+                readable.contains(&cell.fg),
+                "{:?} on the selection bar has unreadable fg {:?}",
+                cell.symbol(),
+                cell.fg
+            );
+        }
     }
 }

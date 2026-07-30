@@ -315,15 +315,14 @@ impl App {
             .map(|c| c.name.clone());
         self.store.reload()?;
         self.list.refilter(&self.store.connections);
-        if let Some(name) = keep {
-            if let Some(pos) = self
+        if let Some(name) = keep
+            && let Some(pos) = self
                 .list
                 .filtered
                 .iter()
                 .position(|&i| self.store.connections[i].name == name)
-            {
-                self.list.selected = pos;
-            }
+        {
+            self.list.selected = pos;
         }
         Ok(())
     }
