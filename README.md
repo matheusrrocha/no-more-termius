@@ -33,8 +33,8 @@ no-more-termius
 ### tmux shortcut (optional)
 
 If you use tmux, a binding like this opens the picker in a new window —
-pick a connection, ssh runs in that window, and when the session ends you
-are back in the picker:
+pick a connection and ssh takes over that window, so the window lives
+exactly as long as the session does:
 
 ```tmux
 # ~/.tmux.conf or ~/.config/tmux/tmux.conf
@@ -64,7 +64,9 @@ status line says when that path was used, since terminals may ignore it.
 Connections live in `~/.config/no-more-termius/connections.toml`. On first
 run the app offers to import the hosts from `~/.ssh/config` (wildcard entries
 are skipped). Connecting uses **system ssh**, so your `~/.ssh/config`
-directives (agent, ProxyJump, IdentityAgent…) still apply on top.
+directives (agent, ProxyJump, IdentityAgent…) still apply on top. The app
+replaces itself with ssh when you connect: the session owns the terminal
+outright and ending it returns you to your shell, not to the picker.
 
 ## Keys
 

@@ -1,3 +1,4 @@
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -327,31 +328,36 @@ impl App {
         Ok(())
     }
 
-    /// Suspend the TUI, run interactive ssh in the real terminal, resume.
+    /// Hand the terminal over to ssh: the TUI is torn down and this process is
+    /// *replaced*, so the session is indistinguishable from typing `ssh`
+    /// yourself and ending it drops you at your shell, not back in the app.
     fn connect(&mut self, idx: usize, terminal: &mut DefaultTerminal) -> Result<()> {
         let Some(conn) = self.store.connections.get(idx) else {
             return Ok(());
         };
         let mut cmd = ssh::build_command(conn);
 
+        // Anything that must outlive the app has to happen before the exec:
+        // there is no coming back to do it afterwards.
+        let previous = self.store.connections[idx].last_used;
+        self.store.connections[idx].last_used = Some(now_epoch());
+        // The timestamp only drives list ordering — never hold up a connection
+        // because it could not be written.
+        let saved = self.store.save();
+
         ratatui::restore();
-        let status = cmd.status();
+        let err = cmd.exec();
+
+        // Only reachable when the exec itself failed (no ssh on PATH, say):
+        // nothing was replaced, so put the TUI and the timestamp back.
         *terminal = ratatui::init();
         terminal.clear().context("re-initializing terminal")?;
-
-        match status {
-            Ok(exit) => {
-                self.store.connections[idx].last_used = Some(now_epoch());
-                self.store.save()?;
-                self.list.refilter(&self.store.connections);
-                if !exit.success() {
-                    self.list.status = Some(format!("ssh exited with {exit}"));
-                }
-            }
-            Err(e) => {
-                self.list.status = Some(format!("failed to launch ssh: {e}"));
-            }
+        self.store.connections[idx].last_used = previous;
+        if saved.is_ok() {
+            let _ = self.store.save();
         }
+        self.list.refilter(&self.store.connections);
+        self.list.status = Some(format!("failed to launch ssh: {err}"));
         Ok(())
     }
 

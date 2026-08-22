@@ -34,7 +34,7 @@ pub fn for_list() -> HelpOverlay {
                 title: "Connections",
                 entries: &[
                     ("/", "fuzzy-search (Enter connects, Esc leaves)"),
-                    ("Enter", "connect (ssh) to selection"),
+                    ("Enter", "connect (ssh) — the app exits into the session"),
                     ("s", "open SFTP browser for selection"),
                     ("j/k  ↑/↓", "move selection"),
                     ("g / G", "first / last"),
