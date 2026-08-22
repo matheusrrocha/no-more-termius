@@ -142,12 +142,12 @@ fn iterm2_sequence(img: &EncodedImage) -> String {
     )
 }
 
-fn in_tmux() -> bool {
+pub fn in_tmux() -> bool {
     std::env::var_os("TMUX").is_some()
 }
 
 /// tmux passthrough envelope: DCS-wrapped with every ESC doubled.
-fn wrap_tmux(seq: &str, tmux: bool) -> String {
+pub fn wrap_tmux(seq: &str, tmux: bool) -> String {
     if !tmux {
         return seq.to_string();
     }
@@ -155,7 +155,7 @@ fn wrap_tmux(seq: &str, tmux: bool) -> String {
 }
 
 /// Standard base64 with padding.
-fn base64(data: &[u8]) -> String {
+pub fn base64(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] =
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);

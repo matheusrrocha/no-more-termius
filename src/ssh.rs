@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 
 use crate::model::Connection;
@@ -6,6 +7,24 @@ use crate::model::Connection;
 /// purpose: it picks up ~/.ssh/config, the agent, ProxyJump, etc. for free.
 pub fn build_command(conn: &Connection) -> Command {
     let mut cmd = Command::new("ssh");
+    push_common(&mut cmd, conn);
+    cmd
+}
+
+/// Interactive shell already `cd`-ed into `dir` on the remote host (the SFTP
+/// browser's `!`). `-t` forces a tty because a remote command is given.
+pub fn build_shell_command(conn: &Connection, dir: &Path) -> Command {
+    let mut cmd = Command::new("ssh");
+    cmd.arg("-t");
+    push_common(&mut cmd, conn);
+    cmd.arg(format!(
+        "cd {} && exec $SHELL -l",
+        shell_quote(&dir.to_string_lossy())
+    ));
+    cmd
+}
+
+fn push_common(cmd: &mut Command, conn: &Connection) {
     if conn.port != 22 {
         cmd.arg("-p").arg(conn.port.to_string());
     }
@@ -16,7 +35,11 @@ pub fn build_command(conn: &Connection) -> Command {
         Some(user) => cmd.arg(format!("{user}@{}", conn.host)),
         None => cmd.arg(&conn.host),
     };
-    cmd
+}
+
+/// Single-quote `s` for the remote POSIX shell; embedded quotes become `'\''`.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 #[cfg(test)]
@@ -71,5 +94,27 @@ mod tests {
             ..base()
         };
         assert_eq!(args(&conn), vec!["admin@example.com"]);
+    }
+
+    #[test]
+    fn shell_command_cds_into_dir() {
+        let conn = Connection {
+            user: Some("root".into()),
+            ..base()
+        };
+        let args: Vec<String> = build_shell_command(&conn, Path::new("/var/www"))
+            .get_args()
+            .map(|a: &OsStr| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            vec!["-t", "root@example.com", "cd '/var/www' && exec $SHELL -l"]
+        );
+    }
+
+    #[test]
+    fn shell_quote_escapes_quotes() {
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        assert_eq!(shell_quote("/plain/dir"), "'/plain/dir'");
     }
 }

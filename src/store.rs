@@ -1,5 +1,6 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -9,6 +10,13 @@ use crate::model::{Connection, StoreFile};
 pub struct Store {
     path: PathBuf,
     pub connections: Vec<Connection>,
+    /// mtime of the file when we last read or wrote it; lets one running
+    /// instance notice saves made by another.
+    mtime: Option<SystemTime>,
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).ok().and_then(|m| m.modified().ok())
 }
 
 #[derive(Serialize)]
@@ -43,6 +51,7 @@ impl Store {
         let file: StoreFile = toml::from_str(&raw)
             .with_context(|| format!("parsing {} (fix or remove the file)", path.display()))?;
         Ok(Some(Store {
+            mtime: file_mtime(&path),
             path,
             connections: file.connections,
         }))
@@ -52,10 +61,29 @@ impl Store {
         Store {
             path,
             connections: Vec::new(),
+            mtime: None,
         }
     }
 
-    pub fn save(&self) -> Result<()> {
+    /// True when the file was modified on disk since we last read or wrote
+    /// it, i.e. another instance saved.
+    pub fn changed_on_disk(&self) -> bool {
+        file_mtime(&self.path) != self.mtime
+    }
+
+    /// Re-read the file, replacing the in-memory connections.
+    pub fn reload(&mut self) -> Result<()> {
+        match Store::load(self.path.clone())? {
+            Some(fresh) => {
+                self.connections = fresh.connections;
+                self.mtime = fresh.mtime;
+            }
+            None => self.mtime = None,
+        }
+        Ok(())
+    }
+
+    pub fn save(&mut self) -> Result<()> {
         let parent = self
             .path
             .parent()
@@ -70,6 +98,7 @@ impl Store {
         fs::write(&tmp, body).with_context(|| format!("writing {}", tmp.display()))?;
         fs::rename(&tmp, &self.path)
             .with_context(|| format!("replacing {}", self.path.display()))?;
+        self.mtime = file_mtime(&self.path);
         Ok(())
     }
 }
@@ -130,6 +159,28 @@ mod tests {
         store.save().unwrap();
         let loaded = Store::load(path.clone()).unwrap().unwrap();
         assert_eq!(loaded.connections, sample());
+        fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn reload_picks_up_external_save() {
+        let path = std::env::temp_dir()
+            .join(format!("termius-tui-reload-{}", std::process::id()))
+            .join("connections.toml");
+        let mut a = Store::new_empty(path.clone());
+        a.connections = sample();
+        a.save().unwrap();
+
+        let mut b = Store::load(path.clone()).unwrap().unwrap();
+        assert!(!b.changed_on_disk());
+
+        a.connections[0].name = "web2".into();
+        a.save().unwrap();
+
+        assert!(b.changed_on_disk());
+        b.reload().unwrap();
+        assert_eq!(b.connections[0].name, "web2");
+        assert!(!b.changed_on_disk());
         fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 

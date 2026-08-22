@@ -34,7 +34,7 @@ pub fn for_list() -> HelpOverlay {
                 title: "Connections",
                 entries: &[
                     ("/", "fuzzy-search (Enter connects, Esc leaves)"),
-                    ("Enter", "connect (ssh) to selection"),
+                    ("Enter", "connect (ssh) — the app exits into the session"),
                     ("s", "open SFTP browser for selection"),
                     ("j/k  ↑/↓", "move selection"),
                     ("g / G", "first / last"),
@@ -43,6 +43,9 @@ pub fn for_list() -> HelpOverlay {
                     ("y", "duplicate selection"),
                     ("f", "toggle favorite ★"),
                     ("d", "delete selection (asks y/n)"),
+                    ("r", "reload list from disk (also automatic)"),
+                    ("x", "export everything to an encrypted bundle"),
+                    ("i", "import a bundle from another machine"),
                     ("q", "quit"),
                 ],
             },
@@ -73,17 +76,49 @@ pub fn for_form() -> HelpOverlay {
 
 pub fn for_picker() -> HelpOverlay {
     HelpOverlay {
-        title: " Help — Key file picker ",
+        title: " Help — File picker ",
         sections: vec![
             HelpSection {
                 title: "File picker",
                 entries: &[
                     ("/", "filter entries in this directory"),
                     ("Enter / l", "enter directory or pick file"),
+                    ("p", "pick this directory (folder mode only)"),
                     ("h / Backspace", "parent directory"),
                     ("j/k  ↑/↓", "move selection"),
                     (".", "show/hide hidden files"),
-                    ("Esc / q", "cancel back to form"),
+                    ("Esc / q", "cancel, back to the form"),
+                ],
+            },
+            GLOBAL,
+        ],
+    }
+}
+
+pub fn for_transfer() -> HelpOverlay {
+    HelpOverlay {
+        title: " Help — Export / import ",
+        sections: vec![
+            HelpSection {
+                title: "Encrypted bundle",
+                entries: &[
+                    ("Tab / ↓", "next field"),
+                    ("Shift-Tab / ↑", "previous field"),
+                    ("Ctrl-o", "browse for the file or folder"),
+                    ("Ctrl-u", "clear the field"),
+                    ("Enter", "export / open the bundle"),
+                    ("Esc", "cancel"),
+                ],
+            },
+            HelpSection {
+                title: "What travels",
+                entries: &[
+                    ("export", "every connection plus the key files they use"),
+                    ("passphrase", "the only secret — nothing else opens the file"),
+                    ("import", "keys are restored into the folder you choose"),
+                    ("y", "confirm the import, keep existing key files"),
+                    ("o", "confirm and overwrite the clashing key files"),
+                    ("n / Esc", "cancel the import"),
                 ],
             },
             GLOBAL,
@@ -110,6 +145,7 @@ pub fn for_sftp() -> HelpOverlay {
                     ("j/k ↑/↓ PgUp/PgDn g/G", "move selection"),
                     (".", "show/hide hidden files"),
                     ("r", "refresh both panes"),
+                    ("!", "ssh shell in remote dir (back here on exit)"),
                     ("Esc", "cancel transfer / clear filter / leave"),
                     ("q", "leave SFTP"),
                     ("y / n", "answer overwrite & host-key prompts"),

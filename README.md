@@ -33,8 +33,8 @@ no-more-termius
 ### tmux shortcut (optional)
 
 If you use tmux, a binding like this opens the picker in a new window —
-pick a connection, ssh runs in that window, and when the session ends you
-are back in the picker:
+pick a connection and ssh takes over that window, so the window lives
+exactly as long as the session does:
 
 ```tmux
 # ~/.tmux.conf or ~/.config/tmux/tmux.conf
@@ -49,12 +49,24 @@ For pixel-perfect image previews inside tmux, also enable passthrough:
 set -g allow-passthrough on
 ```
 
+### Clipboard (optional)
+
+`y` copies through whatever helper your OS ships: `pbcopy` on macOS, `clip`
+on Windows, and `wl-copy` (Wayland) / `xclip` / `xsel` (X11) on Linux and
+BSD — install one from your package manager if you don't have it, e.g.
+`pacman -S wl-clipboard` or `apt install xclip`. With none of them present
+the copy falls back to the terminal's OSC 52 sequence, which also puts the
+text on your *local* clipboard when the app itself is running over ssh; the
+status line says when that path was used, since terminals may ignore it.
+
 ## Data
 
 Connections live in `~/.config/no-more-termius/connections.toml`. On first
 run the app offers to import the hosts from `~/.ssh/config` (wildcard entries
 are skipped). Connecting uses **system ssh**, so your `~/.ssh/config`
-directives (agent, ProxyJump, IdentityAgent…) still apply on top.
+directives (agent, ProxyJump, IdentityAgent…) still apply on top. The app
+replaces itself with ssh when you connect: the session owns the terminal
+outright and ending it returns you to your shell, not to the picker.
 
 ## Keys
 
@@ -68,12 +80,14 @@ Favorites (`★`) sort first, then most recently used.
 | Key | Action |
 |---|---|
 | `/` | fuzzy-search (typing filters, Enter connects, Esc leaves) |
-| Enter | connect (ssh) |
+| Enter | connect (ssh) — the app exits into the session |
 | `s` | open SFTP browser |
 | `j`/`k`, ↑/↓, `g`/`G` | move selection |
 | `a` / `e` / `d` | add / edit / delete (confirms) |
 | `y` | duplicate connection (opens pre-filled form) |
 | `f` | toggle favorite |
+| `x` / `i` | export / import an encrypted bundle |
+| `r` | reload the list from disk (also automatic) |
 | Esc | clear search, then quit · `q` / Ctrl-c quit |
 
 ### Form
@@ -83,6 +97,46 @@ file browser starting at `~` (hidden files visible — keys live in `~/.ssh`;
 it. The optional *SFTP folder* field sets the remote directory the SFTP
 browser opens in (`~/...` is home-relative; falls back to home if missing).
 Enter saves the form, Esc cancels.
+
+### Moving to another machine
+
+`x` exports every connection **and the private key files they point at** into
+a single encrypted bundle; `i` on the other machine puts them back. The
+passphrase you type on export is the only thing that opens the file — there is
+no recovery, no account, nothing phones home.
+
+| Field | Meaning |
+|---|---|
+| Bundle file | where to write it / which one to read (`~` works, Ctrl-o browses) |
+| Passphrase | at least 8 characters, typed twice on export |
+| Restore keys into | import only — defaults to `~/.ssh`, Ctrl-o then `p` picks another folder |
+
+Keys are restored under their original file name with `0600` permissions
+(`.pub` siblings come along at `0644`), and each connection is repointed at
+its copy on the new machine — the two machines do not have to keep keys in the
+same place. Names are kept unique: `~/.ssh/id_rsa` and `~/chaves/id_rsa` are
+different keys, so the second arrives as `id_rsa-2`.
+
+Nothing is destroyed without a yes:
+
+- A connection already present with the same name **and** the same
+  host/port/user is skipped, so re-importing the same bundle changes nothing.
+- A name that clashes with a *different* server arrives as `name (imported)`.
+- A key file already at the target path with different contents is left alone
+  unless you answer `o` (overwrite) instead of `y`.
+- Exporting onto an existing file asks first.
+
+The file is armored text, safe to email to yourself or drop in cloud storage:
+Argon2id (64 MiB, 3 passes) derives the key from your passphrase, and
+XChaCha20-Poly1305 seals the contents, so a wrong passphrase or a single
+modified byte is refused rather than silently mis-decrypted.
+
+```
+-----BEGIN NO-MORE-TERMIUS BUNDLE-----
+Tk1UQk5ETAEAAAEAAwAAAAEAAADeXj0K+55v5lpXTL+NygPOZsAdrk8gLzjiU96d
+...
+-----END NO-MORE-TERMIUS BUNDLE-----
+```
 
 ### SFTP (dual pane: local left, remote right)
 `/` filters the active pane. Tab switches panes.
@@ -111,7 +165,7 @@ ssh-agent → default `~/.ssh/id_*` keys.
 ## Development
 
 ```sh
-cargo test      # parser, store, ssh args, pane logic
+cargo test      # parser, store, ssh args, pane logic, bundle crypto
 cargo clippy
 ```
 

@@ -1,4 +1,6 @@
 mod app;
+mod bundle;
+mod crypto;
 mod model;
 mod screens;
 mod sftp;
