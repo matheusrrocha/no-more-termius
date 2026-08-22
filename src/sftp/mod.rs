@@ -1,6 +1,7 @@
 //! Dual-pane SFTP browser screen: local filesystem on the left, remote SFTP
 //! on the right. Overwrites ALWAYS require confirmation.
 
+pub mod clipboard;
 pub mod graphics;
 pub mod pane;
 pub mod ui;
@@ -489,10 +490,8 @@ impl SftpScreen {
                             .map(String::as_str)
                             .filter(|l| *l != TRUNCATION_MARKER)
                             .collect();
-                        match copy_to_clipboard(&text.join("\n")) {
-                            Ok(()) => self.set_status(format!("copied contents of {name}")),
-                            Err(e) => self.set_status(format!("copy failed: {e}")),
-                        }
+                        let what = format!("contents of {name}");
+                        self.report_copy(&what, clipboard::copy(&text.join("\n")));
                     }
                     KeyCode::Down | KeyCode::Char('j') => scroll = (scroll + 1).min(max),
                     KeyCode::Up | KeyCode::Char('k') => scroll = scroll.saturating_sub(1),
@@ -596,10 +595,18 @@ impl SftpScreen {
             Some(entry) if !entry.is_parent() => entry.path.clone(),
             _ => self.active_pane().cwd.clone(),
         };
-        match copy_to_clipboard(&path.to_string_lossy()) {
-            Ok(()) => self.set_status(format!("copied {}", path.display())),
-            Err(e) => self.set_status(format!("copy failed: {e}")),
-        }
+        let what = path.display().to_string();
+        self.report_copy(&what, clipboard::copy(&path.to_string_lossy()));
+    }
+
+    /// Status line for a copy attempt. OSC 52 is called out because the
+    /// terminal may quietly ignore it — we only know the sequence was sent.
+    fn report_copy(&mut self, what: &str, result: Result<clipboard::Method, String>) {
+        self.set_status(match result {
+            Ok(clipboard::Method::Helper) => format!("copied {what}"),
+            Ok(clipboard::Method::Osc52) => format!("copied {what} (via terminal OSC 52)"),
+            Err(e) => format!("copy failed: {e}"),
+        });
     }
 
     /// Route a file to the right in-app previewer. Temp copies downloaded
@@ -940,18 +947,6 @@ fn expand_remote(dir: &str, home: &Path) -> PathBuf {
     }
 }
 
-fn copy_to_clipboard(text: &str) -> Result<(), String> {
-    use std::io::Write;
-    let mut child = std::process::Command::new("pbcopy")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-    }
-    child.wait().map_err(|e| e.to_string())?;
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

@@ -49,6 +49,16 @@ For pixel-perfect image previews inside tmux, also enable passthrough:
 set -g allow-passthrough on
 ```
 
+### Clipboard (optional)
+
+`y` copies through whatever helper your OS ships: `pbcopy` on macOS, `clip`
+on Windows, and `wl-copy` (Wayland) / `xclip` / `xsel` (X11) on Linux and
+BSD — install one from your package manager if you don't have it, e.g.
+`pacman -S wl-clipboard` or `apt install xclip`. With none of them present
+the copy falls back to the terminal's OSC 52 sequence, which also puts the
+text on your *local* clipboard when the app itself is running over ssh; the
+status line says when that path was used, since terminals may ignore it.
+
 ## Data
 
 Connections live in `~/.config/no-more-termius/connections.toml`. On first
