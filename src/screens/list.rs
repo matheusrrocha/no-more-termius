@@ -15,6 +15,7 @@ use crate::app::Action;
 use crate::theme;
 use crate::model::{now_epoch, Connection};
 use crate::screens::help::centered_rect;
+use crate::screens::transfer::TransferMode;
 
 pub enum ListModal {
     ConfirmDelete(usize),
@@ -154,6 +155,8 @@ impl ListScreen {
                 }
             }
             KeyCode::Char('r') => return Action::Reload,
+            KeyCode::Char('x') => return Action::OpenTransfer(TransferMode::Export),
+            KeyCode::Char('i') => return Action::OpenTransfer(TransferMode::Import),
             KeyCode::Char('q') => return Action::Quit,
             KeyCode::Esc => {
                 if self.query.is_empty() {
@@ -322,7 +325,8 @@ impl ListScreen {
                 ("y", "dup"),
                 ("f", "fav"),
                 ("d", "del"),
-                ("r", "reload"),
+                ("x", "export"),
+                ("i", "import"),
                 ("q", "quit"),
                 ("?", "help"),
             ]),

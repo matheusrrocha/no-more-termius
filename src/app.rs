@@ -11,9 +11,10 @@ use crate::screens::form::FormScreen;
 use crate::screens::help::{self, HelpOverlay};
 use crate::screens::list::{ListModal, ListScreen};
 use crate::screens::picker::PickerScreen;
+use crate::screens::transfer::{TransferMode, TransferScreen};
 use crate::sftp::SftpScreen;
 use crate::store::Store;
-use crate::{ssh, ssh_config};
+use crate::{bundle, ssh, ssh_config};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Screen {
@@ -21,6 +22,26 @@ pub enum Screen {
     Form,
     Picker,
     Sftp,
+    Transfer,
+}
+
+/// What the file browser was opened for. Decides whether it picks files or
+/// folders, and which field the answer goes back to.
+#[derive(Clone, Copy, PartialEq)]
+pub enum PickerTarget {
+    KeyFile,
+    BundleFile,
+    KeysDir,
+}
+
+impl PickerTarget {
+    pub fn title(self) -> &'static str {
+        match self {
+            PickerTarget::KeyFile => "Pick key file",
+            PickerTarget::BundleFile => "Pick bundle",
+            PickerTarget::KeysDir => "Pick folder",
+        }
+    }
 }
 
 pub enum Action {
@@ -32,7 +53,7 @@ pub enum Action {
     Duplicate(usize),
     SubmitForm(Option<usize>, Connection),
     CancelForm,
-    OpenPicker(PathBuf),
+    OpenPicker(PickerTarget, PathBuf),
     PickFile(Option<PathBuf>),
     Connect(usize),
     OpenSftp(usize),
@@ -41,6 +62,23 @@ pub enum Action {
     Reload,
     ImportAccept,
     ImportDecline,
+    /// Open the encrypted export/import screen.
+    OpenTransfer(TransferMode),
+    RunExport {
+        path: PathBuf,
+        passphrase: String,
+    },
+    /// Decrypt a bundle and work out what importing it would do.
+    PlanImport {
+        path: PathBuf,
+        passphrase: String,
+        keys_dir: PathBuf,
+    },
+    /// Carry out the confirmed import; `overwrite` covers clashing key files.
+    ApplyImport {
+        overwrite: bool,
+    },
+    CancelTransfer,
 }
 
 pub struct App {
@@ -50,6 +88,7 @@ pub struct App {
     form: Option<FormScreen>,
     picker: Option<PickerScreen>,
     sftp: Option<SftpScreen>,
+    transfer: Option<TransferScreen>,
     help: Option<HelpOverlay>,
     should_quit: bool,
     /// True while a protocol-drawn image is on screen (needs cleanup).
@@ -86,6 +125,7 @@ impl App {
             form: None,
             picker: None,
             sftp: None,
+            transfer: None,
             help: None,
             should_quit: false,
             gfx_on_screen: false,
@@ -146,6 +186,11 @@ impl App {
                     crate::sftp::ui::render(frame, sftp);
                 }
             }
+            Screen::Transfer => {
+                if let Some(transfer) = &self.transfer {
+                    transfer.render(frame);
+                }
+            }
         }
         if let Some(help) = &self.help {
             help.render(frame);
@@ -170,6 +215,7 @@ impl App {
                 Screen::Form => help::for_form(),
                 Screen::Picker => help::for_picker(),
                 Screen::Sftp => help::for_sftp(),
+                Screen::Transfer => help::for_transfer(),
             });
             return Ok(());
         }
@@ -199,6 +245,10 @@ impl App {
                 }
                 Action::None
             }
+            Screen::Transfer => match &mut self.transfer {
+                Some(transfer) => transfer.handle_key(key),
+                None => Action::None,
+            },
         };
         self.apply(action, terminal)
     }
@@ -211,6 +261,7 @@ impl App {
             Screen::Form => true,
             Screen::Picker => self.picker.as_ref().is_none_or(|p| !p.filtering),
             Screen::Sftp => self.sftp.as_ref().is_none_or(|s| s.help_allowed()),
+            Screen::Transfer => self.transfer.as_ref().is_none_or(|t| t.help_allowed()),
         }
     }
 
@@ -250,16 +301,27 @@ impl App {
                 self.form = None;
                 self.screen = Screen::List;
             }
-            Action::OpenPicker(start) => {
-                self.picker = Some(PickerScreen::new(start));
+            Action::OpenPicker(target, start) => {
+                self.picker = Some(PickerScreen::new(target, start));
                 self.screen = Screen::Picker;
             }
             Action::PickFile(path) => {
-                if let (Some(form), Some(path)) = (&mut self.form, path) {
-                    form.set_key_path(path);
+                // The target also says which screen asked, i.e. where to go back to.
+                match self.picker.take().map(|p| p.target) {
+                    Some(PickerTarget::KeyFile) => {
+                        if let (Some(form), Some(path)) = (&mut self.form, path) {
+                            form.set_key_path(path);
+                        }
+                        self.screen = Screen::Form;
+                    }
+                    Some(PickerTarget::BundleFile | PickerTarget::KeysDir) => {
+                        if let (Some(transfer), Some(path)) = (&mut self.transfer, path) {
+                            transfer.set_picked(path);
+                        }
+                        self.screen = Screen::Transfer;
+                    }
+                    None => self.screen = Screen::List,
                 }
-                self.picker = None;
-                self.screen = Screen::Form;
             }
             Action::Connect(idx) => self.connect(idx, terminal)?,
             Action::OpenSftp(idx) => {
@@ -302,8 +364,111 @@ impl App {
                     self.store.connections.len()
                 ));
             }
+            Action::OpenTransfer(mode) => {
+                self.transfer = Some(match mode {
+                    TransferMode::Export => TransferScreen::export(&self.store.connections),
+                    TransferMode::Import => TransferScreen::import(),
+                });
+                self.screen = Screen::Transfer;
+            }
+            Action::RunExport { path, passphrase } => {
+                match bundle::export_to(&path, &passphrase, &self.store.connections) {
+                    Ok(report) => {
+                        self.transfer = None;
+                        self.screen = Screen::List;
+                        let mut msg = format!(
+                            "Exported {} connection(s) and {} key(s) to {}",
+                            report.connections,
+                            report.keys,
+                            path.display()
+                        );
+                        if !report.unreadable.is_empty() {
+                            msg.push_str(&format!(
+                                " — {} key file(s) could not be read",
+                                report.unreadable.len()
+                            ));
+                        }
+                        self.list.status = Some(msg);
+                    }
+                    Err(e) => self.report_transfer_error(&e),
+                }
+            }
+            Action::PlanImport {
+                path,
+                passphrase,
+                keys_dir,
+            } => {
+                let planned = bundle::read_bundle(&path, &passphrase)
+                    .and_then(|b| bundle::plan(&b, &keys_dir, &self.store.connections));
+                match planned {
+                    Ok(plan) => {
+                        if let Some(transfer) = &mut self.transfer {
+                            transfer.set_pending(plan);
+                        }
+                    }
+                    Err(e) => self.report_transfer_error(&e),
+                }
+            }
+            Action::ApplyImport { overwrite } => {
+                let plan = self.transfer.as_mut().and_then(|t| t.take_pending());
+                if let Some(plan) = plan {
+                    match self.finish_import(plan, overwrite) {
+                        Ok(status) => {
+                            self.transfer = None;
+                            self.screen = Screen::List;
+                            self.list.status = Some(status);
+                        }
+                        Err(e) => self.report_transfer_error(&e),
+                    }
+                }
+            }
+            Action::CancelTransfer => {
+                self.transfer = None;
+                self.screen = Screen::List;
+            }
         }
         Ok(())
+    }
+
+    /// Failures on the transfer screen belong on the transfer screen: the user
+    /// is one keystroke from fixing the passphrase or the path.
+    fn report_transfer_error(&mut self, error: &anyhow::Error) {
+        let message = error
+            .chain()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(": ");
+        match &mut self.transfer {
+            Some(transfer) => transfer.set_error(message),
+            None => self.list.status = Some(format!("failed: {message}")),
+        }
+    }
+
+    /// Write the imported keys, then merge the connections into the store.
+    fn finish_import(&mut self, plan: bundle::ImportPlan, overwrite: bool) -> Result<String> {
+        // Keys first: a connection is useless without the key it points at,
+        // and a failure here must not leave the store half-updated.
+        let written = bundle::apply_keys(&plan, overwrite)?;
+
+        let mut status = format!(
+            "Imported {} connection(s) and {written} key file(s)",
+            plan.additions.len()
+        );
+        if !plan.duplicates.is_empty() {
+            status.push_str(&format!(", {} already present", plan.duplicates.len()));
+        }
+        if !plan.renamed.is_empty() {
+            status.push_str(&format!(", {} renamed", plan.renamed.len()));
+        }
+        let kept = if overwrite { 0 } else { plan.conflicts() };
+        if kept > 0 {
+            status.push_str(&format!(", {kept} existing key(s) kept"));
+        }
+
+        self.store.connections.extend(plan.additions);
+        self.store.save()?;
+        self.list.refilter(&self.store.connections);
+        Ok(status)
     }
 
     /// Re-read the store and refresh the list, keeping the selection on the

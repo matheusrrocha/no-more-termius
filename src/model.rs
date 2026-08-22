@@ -55,6 +55,18 @@ pub struct StoreFile {
     pub connections: Vec<Connection>,
 }
 
+/// First of `base (tag)`, `base (tag 2)`, … that `taken` does not reject.
+pub fn unique_name(base: &str, tag: &str, taken: impl Fn(&str) -> bool) -> String {
+    let first = format!("{base} ({tag})");
+    if !taken(&first) {
+        return first;
+    }
+    (2..)
+        .map(|n| format!("{base} ({tag} {n})"))
+        .find(|candidate| !taken(candidate))
+        .unwrap()
+}
+
 pub fn now_epoch() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

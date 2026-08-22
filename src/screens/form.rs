@@ -9,8 +9,8 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::app::Action;
-use crate::model::Connection;
+use crate::app::{Action, PickerTarget};
+use crate::model::{unique_name, Connection};
 use crate::theme;
 
 const FIELD_LABELS: [&str; 6] = ["Name", "Host", "Port", "User", "Key file", "SFTP folder"];
@@ -90,7 +90,7 @@ impl FormScreen {
             },
             KeyCode::Char('o') if ctrl => {
                 if self.focus == KEY_FIELD {
-                    return Action::OpenPicker(self.picker_start());
+                    return Action::OpenPicker(PickerTarget::KeyFile, self.picker_start());
                 }
             }
             KeyCode::Char(' ') if self.focus == FAVORITE_FIELD => {
@@ -256,15 +256,9 @@ impl FormScreen {
 
 /// "name (copy)", "name (copy 2)", ... — first variant not already taken.
 pub fn duplicate_name(base: &str, connections: &[Connection]) -> String {
-    let taken = |candidate: &str| connections.iter().any(|c| c.name == candidate);
-    let first = format!("{base} (copy)");
-    if !taken(&first) {
-        return first;
-    }
-    (2..)
-        .map(|n| format!("{base} (copy {n})"))
-        .find(|candidate| !taken(candidate))
-        .unwrap()
+    unique_name(base, "copy", |candidate| {
+        connections.iter().any(|c| c.name == candidate)
+    })
 }
 
 #[cfg(test)]

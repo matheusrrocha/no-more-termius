@@ -1,5 +1,6 @@
-//! Filesystem browser used to pick a private key file.
-//! Hidden files are SHOWN by default: keys live in ~/.ssh.
+//! Filesystem browser used to pick a private key file, a bundle, or the
+//! folder to restore keys into. Hidden files are SHOWN by default: keys live
+//! in ~/.ssh.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +14,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use crate::app::Action;
+use crate::app::{Action, PickerTarget};
 use crate::theme;
 
 struct PickEntry {
@@ -23,6 +24,8 @@ struct PickEntry {
 }
 
 pub struct PickerScreen {
+    /// What the caller asked for; also decides how the browser behaves.
+    pub target: PickerTarget,
     cwd: PathBuf,
     entries: Vec<PickEntry>,
     filtered: Vec<usize>,
@@ -37,8 +40,9 @@ pub struct PickerScreen {
 }
 
 impl PickerScreen {
-    pub fn new(start: PathBuf) -> Self {
+    pub fn new(target: PickerTarget, start: PathBuf) -> Self {
         let mut picker = Self {
+            target,
             cwd: start,
             entries: Vec::new(),
             filtered: Vec::new(),
@@ -52,6 +56,12 @@ impl PickerScreen {
         };
         picker.load_dir(picker.cwd.clone());
         picker
+    }
+
+    /// Folder mode lists directories only: there is nothing to choose between
+    /// files when the answer has to be a folder.
+    fn dirs_only(&self) -> bool {
+        self.target == PickerTarget::KeysDir
     }
 
     fn load_dir(&mut self, dir: PathBuf) {
@@ -68,16 +78,19 @@ impl PickerScreen {
     }
 
     fn apply_filter(&mut self) {
+        let visible = |e: &PickEntry| {
+            (self.show_hidden || !e.name.starts_with('.')) && (!self.dirs_only() || e.is_dir)
+        };
         if self.filter.is_empty() {
             self.filtered = (0..self.entries.len())
-                .filter(|&i| self.show_hidden || !self.entries[i].name.starts_with('.'))
+                .filter(|&i| visible(&self.entries[i]))
                 .collect();
         } else {
             let mut scored: Vec<(i64, usize)> = self
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| self.show_hidden || !e.name.starts_with('.'))
+                .filter(|(_, e)| visible(e))
                 .filter_map(|(i, e)| {
                     self.matcher
                         .fuzzy_match(&e.name, &self.filter)
@@ -129,6 +142,9 @@ impl PickerScreen {
                 self.selected = self.filtered.len().saturating_sub(1);
             }
             KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => self.go_parent(),
+            KeyCode::Char('p') if self.dirs_only() => {
+                return Action::PickFile(Some(self.cwd.clone()));
+            }
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                 return self.open_selected();
             }
@@ -191,7 +207,7 @@ impl PickerScreen {
         let [list_area, footer_area] =
             Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
 
-        let mut title = format!(" Pick key file — {} ", self.cwd.display());
+        let mut title = format!(" {} — {} ", self.target.title(), self.cwd.display());
         if self.filtering || !self.filter.is_empty() {
             title.push_str(&format!("[/{}] ", self.filter));
         }
@@ -243,6 +259,15 @@ impl PickerScreen {
                 ("type", "filter"),
                 ("Enter", "open/pick"),
                 ("Esc", "done"),
+            ]),
+            None if self.dirs_only() => theme::hints(&[
+                ("p", "pick this folder"),
+                ("Enter/l", "enter"),
+                ("h", "parent"),
+                ("/", "filter"),
+                (".", "hidden"),
+                ("Esc", "cancel"),
+                ("?", "help"),
             ]),
             None => theme::hints(&[
                 ("Enter/l", "open/pick"),
