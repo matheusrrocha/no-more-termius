@@ -38,8 +38,31 @@ pub fn copy(text: &str) -> Result<Method, String> {
     }
 }
 
+/// Which family of helpers the OS ships. A value rather than a `cfg!` inside
+/// [`candidates`] so every branch stays reachable from the tests, whichever
+/// machine they run on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Platform {
+    MacOs,
+    Windows,
+    Unix,
+}
+
+impl Platform {
+    fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Platform::MacOs
+        } else if cfg!(windows) {
+            Platform::Windows
+        } else {
+            Platform::Unix
+        }
+    }
+}
+
 /// The bits of the environment that decide which helper is likely to work.
 struct Env {
+    platform: Platform,
     wayland: bool,
     x11: bool,
 }
@@ -47,6 +70,7 @@ struct Env {
 impl Env {
     fn current() -> Self {
         Env {
+            platform: Platform::current(),
             wayland: std::env::var_os("WAYLAND_DISPLAY").is_some(),
             x11: std::env::var_os("DISPLAY").is_some(),
         }
@@ -56,14 +80,15 @@ impl Env {
 /// Helpers to try, in order. Spawning a missing binary is cheap, so the list
 /// stays broad; the display server only decides what goes first.
 fn candidates(env: &Env) -> Vec<(&'static str, &'static [&'static str])> {
-    if cfg!(target_os = "macos") {
-        return vec![("pbcopy", &[])];
-    }
-    if cfg!(windows) {
-        return vec![
-            ("clip", &[]),
-            ("powershell", &["-NoProfile", "-Command", "$input | Set-Clipboard"]),
-        ];
+    match env.platform {
+        Platform::MacOs => return vec![("pbcopy", &[])],
+        Platform::Windows => {
+            return vec![
+                ("clip", &[]),
+                ("powershell", &["-NoProfile", "-Command", "$input | Set-Clipboard"]),
+            ];
+        }
+        Platform::Unix => {}
     }
     let wayland: &[(&str, &[&str])] = &[("wl-copy", &[])];
     let x11: &[(&str, &[&str])] = &[
@@ -135,25 +160,56 @@ fn osc52_sequence(text: &str, tmux: bool) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The display-server ordering only ever applies on Unix, so say so
+    /// explicitly instead of inheriting the platform the tests happen to run
+    /// on — otherwise these assertions are unreachable on a macOS dev box.
+    fn unix(wayland: bool, x11: bool) -> Env {
+        Env {
+            platform: Platform::Unix,
+            wayland,
+            x11,
+        }
+    }
+
+    fn names(env: &Env) -> Vec<&'static str> {
+        candidates(env).iter().map(|c| c.0).collect()
+    }
+
     #[test]
     fn wayland_helper_goes_first_under_wayland() {
-        let env = Env { wayland: true, x11: true };
-        assert_eq!(candidates(&env)[0].0, "wl-copy");
+        assert_eq!(names(&unix(true, true))[0], "wl-copy");
     }
 
     #[test]
     fn x11_helper_goes_first_under_plain_x11() {
-        let env = Env { wayland: false, x11: true };
-        assert_eq!(candidates(&env)[0].0, "xclip");
+        assert_eq!(names(&unix(false, true))[0], "xclip");
     }
 
     #[test]
     fn headless_still_offers_every_helper() {
-        let env = Env { wayland: false, x11: false };
-        let names: Vec<&str> = candidates(&env).iter().map(|c| c.0).collect();
+        let names = names(&unix(false, false));
         for want in ["wl-copy", "xclip", "xsel", "clip.exe"] {
             assert!(names.contains(&want), "{want} missing from {names:?}");
         }
+    }
+
+    /// macOS and Windows ship exactly one thing worth trying, and must not
+    /// pick up the Unix list.
+    #[test]
+    fn each_platform_gets_its_own_helpers() {
+        let env = |platform| Env {
+            platform,
+            wayland: true,
+            x11: true,
+        };
+        assert_eq!(names(&env(Platform::MacOs)), ["pbcopy"]);
+        assert_eq!(names(&env(Platform::Windows)), ["clip", "powershell"]);
+    }
+
+    /// Whatever this machine is, the real lookup has to offer something.
+    #[test]
+    fn the_current_environment_resolves_to_a_helper_list() {
+        assert!(!candidates(&Env::current()).is_empty());
     }
 
     #[test]
