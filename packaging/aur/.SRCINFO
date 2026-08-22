@@ -1,0 +1,18 @@
+pkgbase = no-more-termius
+	pkgdesc = Keyboard-driven TUI to manage and open SSH connections, with a dual-pane SFTP browser
+	pkgver = 0.4.0
+	pkgrel = 1
+	url = https://github.com/matheusrrocha/no-more-termius
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	makedepends = cargo
+	depends = gcc-libs
+	depends = glibc
+	depends = libssh2
+	depends = openssl
+	depends = zlib
+	source = no-more-termius-0.4.0.tar.gz::https://github.com/matheusrrocha/no-more-termius/archive/refs/tags/v0.4.0.tar.gz
+	sha256sums = d237d6cb92c8f2aba5aa0c477a14264dc3a2ea32c14346c465cdd4cc4e03700a
+
+pkgname = no-more-termius
