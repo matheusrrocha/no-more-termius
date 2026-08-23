@@ -1,0 +1,113 @@
+name: Release binaries
+
+# Runs when a version tag is pushed. `workflow_dispatch` is there to backfill
+# assets onto a release that was already cut by hand.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach binaries to (e.g. v0.4.1)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04 on purpose: its glibc is older than any Arch/Debian people
+          # will run this on, and glibc is only forward-compatible.
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # Before the checkout, because the tag decides what gets checked out.
+      # Anything reaching a `run:` or a `ref:` goes through a variable and is
+      # shape-checked first: a tag name is attacker-controlled in principle.
+      - name: Validate tag
+        id: v
+        env:
+          RAW_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          case "$RAW_TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::refusing tag '$RAW_TAG': expected vX.Y.Z" ; exit 1 ;;
+          esac
+          printf 'tag=%s\n'     "$RAW_TAG"     >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "${RAW_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ steps.v.outputs.tag }}
+
+      - name: Check the tag matches Cargo.toml
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$VERSION" != "$crate" ]; then
+            echo "::error::tag says $VERSION, Cargo.toml says $crate"
+            exit 1
+          fi
+
+      # Linked, not vendored: OpenSSL and libssh2 carry the ssh transport, so
+      # they should follow the distribution's security updates rather than be
+      # frozen into this binary.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libssh2-1-dev zlib1g-dev
+
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --target "$TARGET"
+
+      - name: Test
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo test --release --locked --target "$TARGET"
+
+      # Printed so the AUR -bin package's depends= can be checked against what
+      # the binary actually needs, instead of guessed.
+      - name: Report dynamic dependencies
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          bin="target/$TARGET/release/no-more-termius"
+          strip "$bin"
+          ldd "$bin"
+          ls -l "$bin"
+
+      - name: Package
+        id: pack
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          name="no-more-termius-$VERSION-$TARGET"
+          mkdir -p "dist/$name"
+          cp "target/$TARGET/release/no-more-termius" LICENSE README.md "dist/$name/"
+          tar -C "dist/$name" -czf "dist/$name.tar.gz" .
+          sha256sum "dist/$name.tar.gz" | tee "dist/$name.tar.gz.sha256"
+          printf 'asset=dist/%s.tar.gz\n' "$name" >> "$GITHUB_OUTPUT"
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.v.outputs.tag }}
+          ASSET: ${{ steps.pack.outputs.asset }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
