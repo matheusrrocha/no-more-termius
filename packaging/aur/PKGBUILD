@@ -1,7 +1,7 @@
 # Maintainer: Matheus Rocha <matheus.rocha@liplynig.com>
 
 pkgname=no-more-termius
-pkgver=0.4.0
+pkgver=0.4.1
 pkgrel=1
 pkgdesc="Keyboard-driven TUI to manage and open SSH connections, with a dual-pane SFTP browser"
 arch=('x86_64' 'aarch64')
@@ -10,7 +10,7 @@ license=('MIT')
 depends=('gcc-libs' 'glibc' 'libssh2' 'openssl' 'zlib')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('d237d6cb92c8f2aba5aa0c477a14264dc3a2ea32c14346c465cdd4cc4e03700a')
+sha256sums=('a4a627c9b83eddbd7714ac62f157ecd4eb3dbb1465478027e328c18448919685')
 
 prepare() {
   cd "$pkgname-$pkgver"

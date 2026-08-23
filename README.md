@@ -16,7 +16,7 @@ no account, no sync, no surprises.
 cargo install no-more-termius
 ```
 
-Pin a version with `cargo install no-more-termius@0.4.0`. Building needs a
+Pin a version with `cargo install no-more-termius@<version>`. Building needs a
 Rust toolchain (1.85+) and, on Linux, the OpenSSL and zlib headers your
 distribution ships (`openssl-devel`/`libssl-dev`, `zlib-devel`/`zlib1g-dev`).
 
@@ -31,10 +31,11 @@ Also covers Arch-based distributions such as Omarchy. The `PKGBUILD` lives in
 
 ### From source
 
-Straight from a tag, without cloning:
+Straight from the repository, without cloning. `main` only ever holds tagged
+releases, so this tracks the latest one:
 
 ```sh
-cargo install --git https://github.com/matheusrrocha/no-more-termius --tag v0.4.0
+cargo install --git https://github.com/matheusrrocha/no-more-termius
 ```
 
 From a clone, to run a branch or your own changes:

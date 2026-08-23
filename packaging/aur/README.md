@@ -29,7 +29,7 @@ namcap PKGBUILD *.pkg.tar.zst    # must be quiet about deps
 
 cp PKGBUILD .SRCINFO ../../../aur-no-more-termius/
 cd ../../../aur-no-more-termius
-git commit -am "no-more-termius 0.4.0"
+git commit -am "no-more-termius 0.4.1"
 git push
 ```
 
