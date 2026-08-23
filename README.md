@@ -13,18 +13,47 @@ no account, no sync, no surprises.
 ## Install
 
 ```sh
+cargo install no-more-termius
+```
+
+Pin a version with `cargo install no-more-termius@0.4.0`. Building needs a
+Rust toolchain (1.85+) and, on Linux, the OpenSSL and zlib headers your
+distribution ships (`openssl-devel`/`libssl-dev`, `zlib-devel`/`zlib1g-dev`).
+
+### Arch Linux
+
+```sh
+yay -S no-more-termius
+```
+
+Also covers Arch-based distributions such as Omarchy. The `PKGBUILD` lives in
+[`packaging/aur`](packaging/aur).
+
+### From source
+
+Straight from a tag, without cloning:
+
+```sh
+cargo install --git https://github.com/matheusrrocha/no-more-termius --tag v0.4.0
+```
+
+From a clone, to run a branch or your own changes:
+
+```sh
+git clone https://github.com/matheusrrocha/no-more-termius
+cd no-more-termius
 cargo install --path .
 ```
 
-This puts the `no-more-termius` binary in `~/.cargo/bin`. If that directory
-is not already on your PATH, add it to your shell profile:
+Any of these put the `no-more-termius` binary in `~/.cargo/bin`. If that
+directory is not already on your PATH, add it to your shell profile:
 
 ```sh
 # ~/.zshrc or ~/.bashrc
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-Then run it directly from any terminal:
+Then run it from any terminal:
 
 ```sh
 no-more-termius
