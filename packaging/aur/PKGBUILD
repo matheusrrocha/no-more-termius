@@ -1,0 +1,39 @@
+# Maintainer: Matheus Rocha <matheus.rocha@liplynig.com>
+
+pkgname=no-more-termius
+pkgver=0.4.0
+pkgrel=1
+pkgdesc="Keyboard-driven TUI to manage and open SSH connections, with a dual-pane SFTP browser"
+arch=('x86_64' 'aarch64')
+url="https://github.com/matheusrrocha/no-more-termius"
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'libssh2' 'openssl' 'zlib')
+makedepends=('cargo')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('d237d6cb92c8f2aba5aa0c477a14264dc3a2ea32c14346c465cdd4cc4e03700a')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm0755 -t "$pkgdir/usr/bin/" "target/release/$pkgname"
+  install -Dm0644 -t "$pkgdir/usr/share/licenses/$pkgname/" LICENSE
+  install -Dm0644 -t "$pkgdir/usr/share/doc/$pkgname/" README.md
+}
