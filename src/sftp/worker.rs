@@ -12,7 +12,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use ssh2::{CheckResult, HashType, KnownHostFileKind, RenameFlags, Session, Sftp};
+use ssh2::{
+    CheckResult, ErrorCode, HashType, KeyboardInteractivePrompt, KnownHostFileKind, Prompt, RenameFlags,
+    Session, Sftp,
+};
 
 use super::pane::{sort_entries, FsEntry};
 
@@ -24,6 +27,7 @@ pub struct ConnectParams {
     pub port: u16,
     pub user: String,
     pub key_path: Option<PathBuf>,
+    pub password: Option<String>,
 }
 
 pub enum SftpRequest {
@@ -101,8 +105,17 @@ impl Drop for WorkerHandle {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         let _ = self.tx.send(SftpRequest::Shutdown);
+        // Join only a worker that is already on its way out. One blocked on a
+        // dead connection (say, after the machine slept) would freeze the UI
+        // until the socket timeout, so it is left to finish on its own.
         if let Some(join) = self.join.take() {
-            let _ = join.join();
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while !join.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if join.is_finished() {
+                let _ = join.join();
+            }
         }
     }
 }
@@ -129,7 +142,16 @@ fn run_worker(
     loop {
         match req_rx.recv_timeout(Duration::from_secs(5)) {
             Ok(SftpRequest::ReadDir(path)) => {
-                let result = read_remote_dir(&sftp, &path);
+                let result = match sftp.readdir(&path) {
+                    Ok(raw) => Ok(to_entries(raw)),
+                    // E.g. the socket died while the machine slept: say so
+                    // instead of leaving a browser that fails every action.
+                    Err(e) if is_transport_error(&e) => {
+                        let _ = tx.send(SftpEvent::Fatal(format!("connection lost: {e}")));
+                        return;
+                    }
+                    Err(e) => Err(e.to_string()),
+                };
                 let _ = tx.send(SftpEvent::DirListing { path, result });
             }
             Ok(SftpRequest::StatRemote(path)) => {
@@ -308,12 +330,21 @@ fn authenticate(
         }
     }
 
-    // 2. ssh-agent.
+    // 2. Stored password: plain "password" auth, or keyboard-interactive for
+    //    servers that only offer that (PAM setups usually do).
+    if !sess.authenticated()
+        && let Some(password) = &params.password
+        && sess.userauth_password(user, password).is_err()
+    {
+        let _ = sess.userauth_keyboard_interactive(user, &mut PasswordPrompter(password));
+    }
+
+    // 3. ssh-agent.
     if !sess.authenticated() {
         let _ = sess.userauth_agent(user);
     }
 
-    // 3. Default keys, tried silently.
+    // 4. Default keys, tried silently.
     if !sess.authenticated()
         && let Some(home) = dirs::home_dir()
     {
@@ -331,15 +362,37 @@ fn authenticate(
     if sess.authenticated() {
         Ok(())
     } else {
+        let password = if params.password.is_some() { "password, " } else { "" };
         bail!(
-            "authentication failed for {user}@{} (tried key file, ssh-agent, default keys)",
+            "authentication failed for {user}@{} (tried key file, {password}ssh-agent, default keys)",
             params.host
         )
     }
 }
 
-fn read_remote_dir(sftp: &Sftp, path: &Path) -> Result<Vec<FsEntry>, String> {
-    let raw = sftp.readdir(path).map_err(|e| e.to_string())?;
+/// Answers every keyboard-interactive prompt with the stored password.
+struct PasswordPrompter<'a>(&'a str);
+
+impl KeyboardInteractivePrompt for PasswordPrompter<'_> {
+    fn prompt<'b>(&mut self, _user: &str, _instructions: &str, prompts: &[Prompt<'b>]) -> Vec<String> {
+        prompts.iter().map(|_| self.0.to_string()).collect()
+    }
+}
+
+/// Socket-level failures (send/recv/disconnect/timeout) as opposed to the
+/// server refusing one operation.
+fn is_transport_error(e: &ssh2::Error) -> bool {
+    const SOCKET_SEND: i32 = -7;
+    const TIMEOUT: i32 = -9;
+    const SOCKET_DISCONNECT: i32 = -13;
+    const SOCKET_RECV: i32 = -43;
+    matches!(
+        e.code(),
+        ErrorCode::Session(SOCKET_SEND | TIMEOUT | SOCKET_DISCONNECT | SOCKET_RECV)
+    )
+}
+
+fn to_entries(raw: Vec<(PathBuf, ssh2::FileStat)>) -> Vec<FsEntry> {
     let mut out = Vec::with_capacity(raw.len());
     for (entry_path, stat) in raw {
         let Some(name) = entry_path.file_name() else {
@@ -355,7 +408,7 @@ fn read_remote_dir(sftp: &Sftp, path: &Path) -> Result<Vec<FsEntry>, String> {
         });
     }
     sort_entries(&mut out);
-    Ok(out)
+    out
 }
 
 /// Copy `src` → `dst` in either direction. Writes to `<dst>.part` first and

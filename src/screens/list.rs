@@ -402,6 +402,7 @@ mod tests {
             port: 22,
             user: Some("root".into()),
             identity_file: None,
+            password: None,
             sftp_dir: None,
             favorite,
             last_used: Some(now_epoch() - 120),

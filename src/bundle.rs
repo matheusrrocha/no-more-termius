@@ -422,6 +422,7 @@ mod tests {
             port: 22,
             user: Some("root".into()),
             identity_file: key,
+            password: None,
             sftp_dir: None,
             favorite: false,
             last_used: None,

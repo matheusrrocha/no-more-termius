@@ -64,6 +64,7 @@ pub fn for_form() -> HelpOverlay {
                     ("Tab / ↓", "next field"),
                     ("Shift-Tab / ↑", "previous field"),
                     ("Ctrl-o", "browse for key file (on Key field)"),
+                    ("Ctrl-r", "show/hide password (on Password field)"),
                     ("Space", "toggle favorite (on Favorite field)"),
                     ("Enter", "save connection"),
                     ("Esc", "cancel without saving"),

@@ -12,6 +12,10 @@ pub struct Connection {
     pub user: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_file: Option<PathBuf>,
+    /// Login password, answered to ssh's password prompt for you. Stored in
+    /// the clear, so the store file is kept owner-only (0600).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
     /// Remote directory the SFTP browser opens in (`~` = remote home).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sftp_dir: Option<String>,

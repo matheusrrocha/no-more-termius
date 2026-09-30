@@ -254,11 +254,12 @@ impl App {
     }
 
     /// `?` opens contextual help everywhere except in text-entry contexts
-    /// (search/filter modes, passphrase prompt), where it types a literal `?`.
+    /// (search/filter modes, passphrase and password fields), where it types
+    /// a literal `?`.
     fn help_allowed(&self) -> bool {
         match self.screen {
             Screen::List => !self.list.searching,
-            Screen::Form => true,
+            Screen::Form => self.form.as_ref().is_none_or(|f| !f.typing_password()),
             Screen::Picker => self.picker.as_ref().is_none_or(|p| !p.filtering),
             Screen::Sftp => self.sftp.as_ref().is_none_or(|s| s.help_allowed()),
             Screen::Transfer => self.transfer.as_ref().is_none_or(|t| t.help_allowed()),

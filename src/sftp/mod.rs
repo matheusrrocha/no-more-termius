@@ -105,6 +105,7 @@ impl SftpScreen {
             port: conn.port,
             user: conn.ssh_user(),
             key_path: conn.identity_file.clone(),
+            password: conn.password.clone(),
         });
 
         let mut local = PaneState::new();

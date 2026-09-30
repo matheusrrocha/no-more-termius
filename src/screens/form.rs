@@ -13,17 +13,28 @@ use crate::app::{Action, PickerTarget};
 use crate::model::{unique_name, Connection};
 use crate::theme;
 
-const FIELD_LABELS: [&str; 6] = ["Name", "Host", "Port", "User", "Key file", "SFTP folder"];
+const FIELD_LABELS: [&str; 7] = [
+    "Name",
+    "Host",
+    "Port",
+    "User",
+    "Key file",
+    "Password",
+    "SFTP folder",
+];
 const PORT_FIELD: usize = 2;
 const KEY_FIELD: usize = 4;
-const SFTP_DIR_FIELD: usize = 5;
-const FAVORITE_FIELD: usize = 6;
-const FOCUS_COUNT: usize = 7;
+const PASSWORD_FIELD: usize = 5;
+const SFTP_DIR_FIELD: usize = 6;
+const FAVORITE_FIELD: usize = 7;
+const FOCUS_COUNT: usize = 8;
 
 pub struct FormScreen {
     pub editing: Option<usize>,
-    fields: [String; 6],
+    fields: [String; 7],
     favorite: bool,
+    /// Ctrl-r: show the password field in the clear.
+    reveal: bool,
     focus: usize,
     error: Option<String>,
     /// Preserved so an edit keeps its last_used timestamp.
@@ -36,6 +47,7 @@ impl FormScreen {
             editing: None,
             fields: Default::default(),
             favorite: false,
+            reveal: false,
             focus: 0,
             error: None,
             last_used: None,
@@ -54,9 +66,11 @@ impl FormScreen {
                     .as_ref()
                     .map(|p| p.display().to_string())
                     .unwrap_or_default(),
+                conn.password.clone().unwrap_or_default(),
                 conn.sftp_dir.clone().unwrap_or_default(),
             ],
             favorite: conn.favorite,
+            reveal: false,
             focus: 0,
             error: None,
             last_used: conn.last_used,
@@ -70,6 +84,11 @@ impl FormScreen {
         form.fields[0] = duplicate_name(&conn.name, connections);
         form.last_used = None;
         form
+    }
+
+    /// On the password field `?` is a character, not the help key.
+    pub fn typing_password(&self) -> bool {
+        self.focus == PASSWORD_FIELD
     }
 
     pub fn set_key_path(&mut self, path: PathBuf) {
@@ -91,6 +110,11 @@ impl FormScreen {
             KeyCode::Char('o') if ctrl => {
                 if self.focus == KEY_FIELD {
                     return Action::OpenPicker(PickerTarget::KeyFile, self.picker_start());
+                }
+            }
+            KeyCode::Char('r') if ctrl => {
+                if self.focus == PASSWORD_FIELD {
+                    self.reveal = !self.reveal;
                 }
             }
             KeyCode::Char(' ') if self.focus == FAVORITE_FIELD => {
@@ -159,6 +183,10 @@ impl FormScreen {
             }
             Some(path)
         };
+        // Not trimmed: spaces can be part of a password.
+        let password = Some(&self.fields[PASSWORD_FIELD])
+            .filter(|s| !s.is_empty())
+            .cloned();
         let sftp_dir = Some(self.fields[SFTP_DIR_FIELD].trim())
             .filter(|s| !s.is_empty())
             .map(String::from);
@@ -168,6 +196,7 @@ impl FormScreen {
             port,
             user,
             identity_file,
+            password,
             sftp_dir,
             favorite: self.favorite,
             last_used: self.last_used,
@@ -191,6 +220,7 @@ impl FormScreen {
             Constraint::Length(3), // port
             Constraint::Length(3), // user
             Constraint::Length(3), // key
+            Constraint::Length(3), // password
             Constraint::Length(3), // sftp folder
             Constraint::Length(1), // favorite
             Constraint::Length(1), // spacer
@@ -201,15 +231,21 @@ impl FormScreen {
 
         for (i, label) in FIELD_LABELS.iter().enumerate() {
             let focused = self.focus == i;
-            let mut text = self.fields[i].clone();
+            let mut text = if i == PASSWORD_FIELD && !self.reveal {
+                "•".repeat(self.fields[i].chars().count())
+            } else {
+                self.fields[i].clone()
+            };
             if text.is_empty() {
                 text = match i {
                     KEY_FIELD => "(optional — Ctrl-o to browse)".into(),
+                    PASSWORD_FIELD => "(optional — typed into ssh's password prompt for you)".into(),
                     SFTP_DIR_FIELD => "(optional — remote dir to open, e.g. /var/www)".into(),
                     _ => text,
                 };
             }
-            let value_style = if self.fields[i].is_empty() && (i == KEY_FIELD || i == SFTP_DIR_FIELD)
+            let value_style = if self.fields[i].is_empty()
+                && matches!(i, KEY_FIELD | PASSWORD_FIELD | SFTP_DIR_FIELD)
             {
                 Style::default().fg(theme::DIM)
             } else {
@@ -250,7 +286,7 @@ impl FormScreen {
                 ("?", "help"),
             ]),
         };
-        frame.render_widget(Paragraph::new(footer), rows[8]);
+        frame.render_widget(Paragraph::new(footer), rows[FAVORITE_FIELD + 2]);
     }
 }
 
@@ -272,6 +308,7 @@ mod tests {
             port: 22,
             user: None,
             identity_file: None,
+            password: None,
             sftp_dir: None,
             favorite: false,
             last_used: None,
@@ -298,6 +335,7 @@ mod tests {
             port: 2222,
             user: Some("root".into()),
             identity_file: None,
+            password: None,
             sftp_dir: Some("/var/www".into()),
             favorite: true,
             last_used: Some(123),
@@ -311,5 +349,25 @@ mod tests {
         assert_eq!(form.fields[SFTP_DIR_FIELD], "/var/www");
         assert!(form.favorite);
         assert_eq!(form.last_used, None);
+    }
+
+    #[test]
+    fn password_round_trips_untrimmed_and_types_question_marks() {
+        let mut form = FormScreen::new_add();
+        form.fields[0] = "web".into();
+        form.fields[1] = "10.0.0.1".into();
+        form.focus = PASSWORD_FIELD;
+        assert!(form.typing_password());
+        for c in " pa?ss ".chars() {
+            form.handle_key(KeyEvent::from(KeyCode::Char(c)), &[]);
+        }
+        let conn = form.validate(&[]).unwrap();
+        assert_eq!(conn.password.as_deref(), Some(" pa?ss "));
+
+        let edit = FormScreen::new_edit(0, &conn);
+        assert_eq!(edit.fields[PASSWORD_FIELD], " pa?ss ");
+
+        form.fields[PASSWORD_FIELD].clear();
+        assert_eq!(form.validate(&[]).unwrap().password, None);
     }
 }

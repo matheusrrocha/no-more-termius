@@ -98,6 +98,18 @@ directives (agent, ProxyJump, IdentityAgent…) still apply on top. The app
 replaces itself with ssh when you connect: the session owns the terminal
 outright and ending it returns you to your shell, not to the picker.
 
+Every session runs with `ServerAliveInterval=15` / `ServerAliveCountMax=3`,
+so a connection that died while the machine slept ends within ~45 seconds
+instead of freezing the terminal. The SFTP browser likewise reports
+"connection lost" and returns to the list.
+
+A connection's optional **password** is stored in `connections.toml` in the
+clear (the file is kept at mode `0600`) and travels inside encrypted export
+bundles. On connect, ssh is pointed at the app itself as `SSH_ASKPASS`: the
+first password prompt is answered for you, and anything else — host-key
+questions, key passphrases, 2FA codes, or a retry after a wrong stored
+password — is asked on the terminal as usual. Needs OpenSSH 8.4+.
+
 ## Keys
 
 Press `?` on any screen for contextual help — the bindings for the current
@@ -124,7 +136,8 @@ Favorites (`★`) sort first, then most recently used.
 Tab/Shift-Tab move between fields. On the *Key file* field, **Ctrl-o** opens a
 file browser starting at `~` (hidden files visible — keys live in `~/.ssh`;
 `.` toggles). `/` filters, `h`/`l` or Enter navigate, Enter on a file picks
-it. The optional *SFTP folder* field sets the remote directory the SFTP
+it. The *Password* field is masked (**Ctrl-r** shows it; `?` types a literal
+`?` there). The optional *SFTP folder* field sets the remote directory the SFTP
 browser opens in (`~/...` is home-relative; falls back to home if missing).
 Enter saves the form, Esc cancels.
 
@@ -190,7 +203,7 @@ to a `.part` file and rename on completion, so a cancelled or failed transfer
 never corrupts an existing destination file. Unknown host keys prompt with the
 SHA256 fingerprint before being appended to `~/.ssh/known_hosts`; mismatching
 keys abort. Auth order: connection key file (passphrase prompted if needed) →
-ssh-agent → default `~/.ssh/id_*` keys.
+stored password (password or keyboard-interactive) → ssh-agent → default `~/.ssh/id_*` keys.
 
 ## Development
 

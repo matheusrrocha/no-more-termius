@@ -1,4 +1,6 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -95,7 +97,18 @@ impl Store {
         })
         .context("serializing connections")?;
         let tmp = self.path.with_extension("toml.tmp");
-        fs::write(&tmp, body).with_context(|| format!("writing {}", tmp.display()))?;
+        // Owner-only from the first byte: connections may carry passwords. A
+        // leftover tmp from a crash is removed so create_new applies the mode.
+        let _ = fs::remove_file(&tmp);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .with_context(|| format!("creating {}", tmp.display()))?;
+        file.write_all(body.as_bytes())
+            .and_then(|_| file.sync_all())
+            .with_context(|| format!("writing {}", tmp.display()))?;
         fs::rename(&tmp, &self.path)
             .with_context(|| format!("replacing {}", self.path.display()))?;
         self.mtime = file_mtime(&self.path);
@@ -106,6 +119,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
 
     fn sample() -> Vec<Connection> {
         vec![
@@ -115,6 +129,7 @@ mod tests {
                 port: 2222,
                 user: Some("deploy".into()),
                 identity_file: Some(PathBuf::from("/home/x/.ssh/id_ed25519")),
+                password: Some("s3cret \"quoted\"".into()),
                 sftp_dir: None,
                 favorite: true,
                 last_used: Some(1_700_000_000),
@@ -125,6 +140,7 @@ mod tests {
                 port: 22,
                 user: None,
                 identity_file: None,
+                password: None,
                 sftp_dir: None,
                 favorite: false,
                 last_used: None,
@@ -157,6 +173,8 @@ mod tests {
         let mut store = Store::new_empty(path.clone());
         store.connections = sample();
         store.save().unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
         let loaded = Store::load(path.clone()).unwrap().unwrap();
         assert_eq!(loaded.connections, sample());
         fs::remove_dir_all(path.parent().unwrap()).ok();
