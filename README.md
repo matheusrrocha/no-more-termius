@@ -205,6 +205,41 @@ SHA256 fingerprint before being appended to `~/.ssh/known_hosts`; mismatching
 keys abort. Auth order: connection key file (passphrase prompted if needed) →
 stored password (password or keyboard-interactive) → ssh-agent → default `~/.ssh/id_*` keys.
 
+## Scripting
+
+The same binary answers a few non-interactive commands, for scripts and
+agents. Passwords are never printed (`has_password` says whether one is set)
+and are only accepted on stdin; a running TUI picks the changes up on its own.
+
+```sh
+no-more-termius list                       # every connection, as TOML
+no-more-termius show web                   # one connection + its ssh command line
+no-more-termius run web -- uptime          # remote command, stored password answered
+no-more-termius add --name web --host 10.0.0.1 --user deploy --key ~/.ssh/id_ed25519
+printf '%s\n' "$PW" | no-more-termius edit web --password-stdin
+no-more-termius edit web --port 2222 --no-key
+no-more-termius rm web
+```
+
+`no-more-termius help` lists every option. `run` has no terminal, so a
+first-time host-key question or a key passphrase can't be answered there —
+connect once from the TUI first.
+
+### Claude Code plugin
+
+The repository is also a Claude Code plugin marketplace. The plugin teaches
+Claude to look servers up, run commands on them and manage entries through the
+commands above (it never reads `connections.toml`, so stored passwords stay out
+of the conversation):
+
+```
+/plugin marketplace add matheusrrocha/no-more-termius
+/plugin install no-more-termius@no-more-termius
+```
+
+Needs the `no-more-termius` binary installed. To try a local checkout:
+`claude --plugin-dir ./claude-plugin`.
+
 ## Development
 
 ```sh

@@ -11,7 +11,7 @@ repository = "https://github.com/matheusrrocha/no-more-termius"
 homepage = "https://github.com/matheusrrocha/no-more-termius"
 keywords = ["ssh", "tui", "sftp", "terminal", "ratatui"]
 categories = ["command-line-utilities", "network-programming"]
-exclude = [".github/", "docs/", "packaging/"]
+exclude = [".github/", ".claude-plugin/", "claude-plugin/", "docs/", "packaging/"]
 
 [dependencies]
 anyhow = "1.0.103"

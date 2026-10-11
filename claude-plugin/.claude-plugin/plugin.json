@@ -1,0 +1,7 @@
+{
+  "name": "no-more-termius",
+  "description": "Look up, connect to, and manage the SSH servers saved in no-more-termius",
+  "author": { "name": "Matheus Rocha" },
+  "homepage": "https://github.com/matheusrrocha/no-more-termius",
+  "license": "MIT"
+}

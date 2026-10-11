@@ -1,0 +1,14 @@
+{
+  "name": "no-more-termius",
+  "description": "Claude Code plugin for the no-more-termius SSH connection manager",
+  "owner": {
+    "name": "Matheus Rocha"
+  },
+  "plugins": [
+    {
+      "name": "no-more-termius",
+      "description": "Look up, connect to, and manage the SSH servers saved in no-more-termius",
+      "source": "./claude-plugin"
+    }
+  ]
+}
