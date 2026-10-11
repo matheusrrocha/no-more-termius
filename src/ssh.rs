@@ -46,6 +46,7 @@ fn push_common(cmd: &mut Command, conn: &Connection) {
     if let Some(key) = &conn.identity_file {
         cmd.arg("-i").arg(key);
     }
+    push_auth_order(cmd, conn);
     match &conn.user {
         Some(user) => cmd.arg(format!("{user}@{}", conn.host)),
         None => cmd.arg(&conn.host),
@@ -64,6 +65,23 @@ fn push_askpass(cmd: &mut Command, conn: &Connection) {
     cmd.env("SSH_ASKPASS", exe)
         .env("SSH_ASKPASS_REQUIRE", "force")
         .env(ASKPASS_ENV, &conn.name);
+}
+
+/// With a stored password, go straight for it (after the connection's own
+/// key, if any). Otherwise ssh offers every agent and default key first and
+/// servers hang up with "Too many authentication failures" (MaxAuthTries)
+/// before the password is ever asked.
+fn push_auth_order(cmd: &mut Command, conn: &Connection) {
+    if conn.password.is_none() {
+        return;
+    }
+    let methods = if conn.identity_file.is_some() {
+        cmd.args(["-o", "IdentitiesOnly=yes"]);
+        "publickey,password,keyboard-interactive"
+    } else {
+        "password,keyboard-interactive"
+    };
+    cmd.arg("-o").arg(format!("PreferredAuthentications={methods}"));
 }
 
 /// Single-quote `s` for the remote POSIX shell; embedded quotes become `'\''`.
@@ -183,6 +201,39 @@ mod tests {
                 .get_envs()
                 .any(|(_, v)| v.is_some_and(|v| v.to_string_lossy().contains("hunter2")));
         assert!(!leaked);
+    }
+
+    #[test]
+    fn password_skips_the_key_parade() {
+        let pw = Connection {
+            password: Some("pw".into()),
+            ..base()
+        };
+        assert_eq!(
+            args(&pw),
+            vec![
+                "-o",
+                "PreferredAuthentications=password,keyboard-interactive",
+                "example.com"
+            ]
+        );
+
+        let pw_and_key = Connection {
+            identity_file: Some(PathBuf::from("/k/id")),
+            ..pw
+        };
+        assert_eq!(
+            args(&pw_and_key),
+            vec![
+                "-i",
+                "/k/id",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "PreferredAuthentications=publickey,password,keyboard-interactive",
+                "example.com"
+            ]
+        );
     }
 
     #[test]
